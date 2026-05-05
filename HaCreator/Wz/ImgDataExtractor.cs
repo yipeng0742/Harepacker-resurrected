@@ -1,4 +1,4 @@
-﻿using HaCreator.MapEditor.Info;
+using HaCreator.MapEditor.Info;
 using HaSharedLibrary.Wz;
 using MapleLib.Helpers;
 using MapleLib.Img;
@@ -388,7 +388,7 @@ namespace HaCreator.Wz
             {
                 actImg.ParseImage();
                 foreach (WzImageProperty prop in actImg.WzProperties)
-                    _infoManager.QuestActs.Add(prop.Name, prop as WzSubProperty);
+                    _infoManager.QuestActs[prop.Name] = prop as WzSubProperty;
             }
 
             var checkImg = _dataSource.GetImage("Quest", "Check.img");
@@ -396,7 +396,7 @@ namespace HaCreator.Wz
             {
                 checkImg.ParseImage();
                 foreach (WzImageProperty prop in checkImg.WzProperties)
-                    _infoManager.QuestChecks.Add(prop.Name, prop as WzSubProperty);
+                    _infoManager.QuestChecks[prop.Name] = prop as WzSubProperty;
             }
 
             var infoImg = _dataSource.GetImage("Quest", "QuestInfo.img");
@@ -404,7 +404,7 @@ namespace HaCreator.Wz
             {
                 infoImg.ParseImage();
                 foreach (WzImageProperty prop in infoImg.WzProperties)
-                    _infoManager.QuestInfos.Add(prop.Name, prop as WzSubProperty);
+                    _infoManager.QuestInfos[prop.Name] = prop as WzSubProperty;
             }
 
             var sayImg = _dataSource.GetImage("Quest", "Say.img");
@@ -412,7 +412,7 @@ namespace HaCreator.Wz
             {
                 sayImg.ParseImage();
                 foreach (WzImageProperty prop in sayImg.WzProperties)
-                    _infoManager.QuestSays.Add(prop.Name, prop as WzSubProperty);
+                    _infoManager.QuestSays[prop.Name] = prop as WzSubProperty;
             }
         }
 
@@ -456,7 +456,10 @@ namespace HaCreator.Wz
             }
 
             if (mapHelperImg == null)
-                throw new Exception("MapHelper.img not found.");
+            {
+                ErrorLogger.Log(ErrorLevel.MissingFeature, "MapHelper.img not found — map marks will be unavailable.");
+                return;
+            }
 
             mapHelperImg.ParseImage();
             var markProp = mapHelperImg["mark"];
@@ -483,7 +486,10 @@ namespace HaCreator.Wz
                 mapHelperImg = _dataSource.GetImageByPath("Map/Map/MapHelper.img");
 
             if (mapHelperImg == null)
-                throw new Exception("MapHelper.img not found for portals.");
+            {
+                ErrorLogger.Log(ErrorLevel.MissingFeature, "MapHelper.img not found — portal extraction skipped.");
+                return;
+            }
 
             mapHelperImg.ParseImage();
             WzSubProperty portalParent = (WzSubProperty)mapHelperImg["portal"];

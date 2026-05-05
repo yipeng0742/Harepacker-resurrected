@@ -1,4 +1,4 @@
-﻿using HaCreator.MapEditor;
+using HaCreator.MapEditor;
 using HaCreator.MapEditor.Info;
 using HaCreator.MapEditor.Instance;
 using HaCreator.MapEditor.Instance.Misc;
@@ -199,6 +199,9 @@ namespace HaCreator.MapSimulator
 
         // Centralized game state management
         private readonly GameStateManager _gameState = new GameStateManager();
+
+        // Dataset Generator
+        private readonly DatasetGenerator _datasetGenerator = new DatasetGenerator();
 
         // Map state cache for maintaining entity positions across map transitions
         private readonly MapStateCache _mapStateCache = new MapStateCache();
@@ -433,8 +436,17 @@ namespace HaCreator.MapSimulator
             this._renderParams = new RenderParameters(RenderWidth, RenderHeight, RenderObjectScaling, mapRenderResolution);
         }
 
+        private IPC.GymServer _gymServer;
+        private bool _gymMode = false;
+        private float _gymTargetX = 0f;
+        private float _gymTargetY = 0f;
+
         protected override void Initialize()
         {
+            // Initialize Gym IPC Server
+            _gymServer = new IPC.GymServer();
+            _gymServer.Start(5555);
+            
             // TODO: Add your initialization logic here
 
             // Create map layers
@@ -1764,7 +1776,7 @@ namespace HaCreator.MapSimulator
                 }
                 if (mobImage == null && Program.WzManager != null)
                 {
-                    mobImage = (WzImage)Program.WzManager.FindWzImageByName("mob", mobImgName);
+                    mobImage = Program.WzManager.FindWzImageByName("mob", mobImgName) as WzImage;
                 }
 
                 if (mobImage != null)
@@ -1901,9 +1913,31 @@ namespace HaCreator.MapSimulator
         {
             float frameRate = 1 / (float)gameTime.ElapsedGameTime.TotalSeconds;
             currTickCount = Environment.TickCount;
-            float delta = gameTime.ElapsedGameTime.Milliseconds / 1000f;
+            // Use fixed delta for Gym Mode to ensure physics stability (1/60s per step)
+            float delta = _gymMode ? (1f / 60f) : (gameTime.ElapsedGameTime.Milliseconds / 1000f);
+            
             KeyboardState newKeyboardState = Keyboard.GetState();  // get the newest state
             MouseState newMouseState = mouseCursor.MouseState;
+
+            // Toggle Gym Mode (Sim2Real RL Environment)
+            if (newKeyboardState.IsKeyUp(Keys.F3) && _oldKeyboardState.IsKeyDown(Keys.F3))
+            {
+                _gymMode = !_gymMode;
+                if (_gymServer != null) _gymServer.ClearAction();
+                System.Console.WriteLine($"[Gym Server] Mode: {(_gymMode ? "ON" : "OFF")}");
+            }
+
+            // --- GYM SERVER SYNCHRONOUS STEPPING ---
+            if (_gymMode)
+            {
+                if (_gymServer?.PendingAction == null)
+                {
+                    _oldKeyboardState = newKeyboardState;
+                    _oldMouseState = newMouseState;
+                    // Freeze game tick until action is received
+                    return;
+                }
+            }
 
             // Update UI Windows - handles ESC to close windows and I/E/S/Q toggles
             // Pass chat state to prevent hotkeys from working while typing
@@ -2143,8 +2177,14 @@ namespace HaCreator.MapSimulator
                     this._gameState.HideUIMode = !this._gameState.HideUIMode;
                 }
             }
+            // (F3 Check Moved up)
 
             // Debug keys
+            if (newKeyboardState.IsKeyUp(Keys.F4) && _oldKeyboardState.IsKeyDown(Keys.F4))
+            {
+                _datasetGenerator.ToggleGeneration();
+            }
+
             if (newKeyboardState.IsKeyUp(Keys.F5) && _oldKeyboardState.IsKeyDown(Keys.F5))
             {
                 this._gameState.ShowDebugMode = !this._gameState.ShowDebugMode;
@@ -2466,6 +2506,67 @@ namespace HaCreator.MapSimulator
             if (_playerManager != null)
             {
                 _playerManager.IsPlayerControlEnabled = _gameState.PlayerControlEnabled;
+                _playerManager.IsGymControlled = _gymMode;
+                
+                // Inject Gym RL Action
+                if (_gymMode && _gymServer?.PendingAction != null && _playerManager.Player != null)
+                {
+                    var act = _gymServer.PendingAction;
+                    
+                    if (act.Reset)
+                    {
+                        var footholds = _mapBoard?.BoardItems?.FootholdLines;
+                        if (footholds != null && footholds.Count > 0)
+                        {
+                            var rnd = new Random();
+                            var startFh = footholds[rnd.Next(footholds.Count)];
+                            float startX = (startFh.FirstDot.X + startFh.SecondDot.X) / 2f;
+                            float startY = (startFh.FirstDot.Y + startFh.SecondDot.Y) / 2f - 20f;
+                            
+                            _playerManager.TeleportTo(startX, startY);
+                            if (_playerManager.Player.Physics != null)
+                            {
+                                _playerManager.Player.Physics.VelocityX = 0;
+                                _playerManager.Player.Physics.VelocityY = 0;
+                            }
+                            
+                            if (act.TargetX == 0 && act.TargetY == 0)
+                            {
+                                FootholdLine targetFh = null;
+                                // Try up to 50 times to find a foothold far enough away
+                                for (int i = 0; i < 50; i++)
+                                {
+                                    var candidate = footholds[rnd.Next(footholds.Count)];
+                                    float candX = (candidate.FirstDot.X + candidate.SecondDot.X) / 2f;
+                                    float candY = (candidate.FirstDot.Y + candidate.SecondDot.Y) / 2f - 20f;
+                                    
+                                    float distSq = (candX - startX) * (candX - startX) + (candY - startY) * (candY - startY);
+                                    if (distSq > 300f * 300f) // Must be at least 300 pixels away
+                                    {
+                                        targetFh = candidate;
+                                        break;
+                                    }
+                                }
+                                
+                                // Fallback if map is too small
+                                if (targetFh == null) targetFh = footholds[rnd.Next(footholds.Count)];
+                                
+                                _gymTargetX = (targetFh.FirstDot.X + targetFh.SecondDot.X) / 2f;
+                                _gymTargetY = (targetFh.FirstDot.Y + targetFh.SecondDot.Y) / 2f - 20f;
+                            }
+                            else
+                            {
+                                _gymTargetX = act.TargetX;
+                                _gymTargetY = act.TargetY;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        _playerManager.Player.SetInput(act.Left, act.Right, act.Up, act.Down, act.Jump, false, false);
+                    }
+                }
+                
                 _playerManager.Update(currTickCount, deltaSeconds, _chat.IsActive);
 
                 // Update camera controller based on player/camera mode
@@ -2586,6 +2687,170 @@ namespace HaCreator.MapSimulator
 
             // Cleanup finished sound instances
             _soundManager?.Update();
+
+            // --- DATASET GENERATOR DATA AUGMENTATION ---
+            if (_datasetGenerator.IsGenerating)
+            {
+                Random rand = new Random(currTickCount);
+                foreach (var mob in _mobPool.ActiveMobs)
+                {
+                    if (rand.NextDouble() < 0.3) // 30% chance to be in hit state with damage
+                    {
+                        mob.ForceStateForDataset("hit1");
+                        
+                        // 10% chance to trigger a massive damage cascade
+                        if (rand.NextDouble() < 0.1) 
+                        {
+                            int cascadeCount = rand.Next(3, 7); // 3 to 6 overlapping numbers
+                            for (int i = 0; i < cascadeCount; i++)
+                            {
+                                float dmgX = mob.CurrentX + (float)((rand.NextDouble() - 0.5) * 60);
+                                float dmgY = mob.CurrentY - 30 + (float)((rand.NextDouble() - 0.5) * 60);
+                                _effectManager.Combat.AddPlayerDamage(rand.Next(10000, 999999), dmgX, dmgY, rand.NextDouble() > 0.5, currTickCount);
+                            }
+                        }
+                        
+                        // 20% chance to spawn heavy occlusion skill effects to simulate combat blindspots
+                        if (rand.NextDouble() < 0.2) 
+                        {
+                            int particleCount = rand.Next(2, 6); // 2 to 5 overlapping procedural glow particles
+                            for (int i = 0; i < particleCount; i++)
+                            {
+                                float xOffset = (float)((rand.NextDouble() - 0.5) * 160);
+                                float yOffset = (float)((rand.NextDouble() - 0.5) * 160);
+                                Color randomTint = new Color(
+                                    rand.Next(100, 255), 
+                                    rand.Next(100, 255), 
+                                    rand.Next(100, 255), 
+                                    rand.Next(120, 200));
+                                    
+                                _effectManager.Combat.AddHitEffect(mob.CurrentX + xOffset, mob.CurrentY + yOffset - 30, currTickCount, rand.Next(0, 4), rand.NextDouble() > 0.5, randomTint);
+                            }
+                        }
+
+                        // Randomly display the green Mob HP bar to allow YOLO model to recognize it
+                        if (rand.NextDouble() < 0.5) 
+                        {
+                            _effectManager.Combat.OnMobDamaged(mob, currTickCount);
+                            _effectManager.Combat.RandomizeMobHPBarForDataset(mob.PoolId, rand);
+                        }
+                    }
+                    else
+                    {
+                        mob.ForceStateForDataset(null);
+                    }
+                }
+            }
+            // --- GYM SERVER STATE EXPORT ---
+            if (_gymMode && _gymServer?.PendingAction != null)
+            {
+                var state = new IPC.GymState();
+                if (_playerManager?.Player != null)
+                {
+                    var p = _playerManager.Player;
+                    state.X = p.X;
+                    state.Y = p.Y;
+                    state.VX = (float)(p.Physics?.VelocityX ?? 0.0);
+                    state.VY = (float)(p.Physics?.VelocityY ?? 0.0);
+                    state.IsGrounded = p.Physics?.IsOnFoothold() ?? false;
+                    
+                    var currentFh = p.Physics?.CurrentFoothold;
+                    if (currentFh != null)
+                    {
+                        state.DistLeftEdge = p.X - currentFh.FirstDot.X;
+                        state.DistRightEdge = currentFh.SecondDot.X - p.X;
+                    }
+                    else
+                    {
+                        state.DistLeftEdge = 9999f;
+                        state.DistRightEdge = 9999f;
+                    }
+                    
+                    state.TargetX = _gymTargetX;
+                    state.TargetY = _gymTargetY;
+                    
+                    // Simple distance check to see if we reached the goal
+                    float dx = p.X - _gymTargetX;
+                    float dy = p.Y - _gymTargetY;
+                    state.IsDone = (dx * dx + dy * dy) < (50f * 50f);
+                    
+                    // --- Ladder Vision ---
+                    var ropes = _mapBoard?.BoardItems?.Ropes;
+                    float minDistSq = float.MaxValue;
+                    state.NearestLadderX = 9999f;
+                    state.NearestLadderTop = 9999f;
+                    state.NearestLadderBottom = 9999f;
+                    state.IsOverlappingLadder = false;
+
+                    if (ropes != null)
+                    {
+                        foreach (var rope in ropes)
+                        {
+                            float ropeX = rope.FirstAnchor.X;
+                            float ropeTop = Math.Min(rope.FirstAnchor.Y, rope.SecondAnchor.Y);
+                            float ropeBottom = Math.Max(rope.FirstAnchor.Y, rope.SecondAnchor.Y);
+                            
+                            float dxLadder = p.X - ropeX;
+                            float midY = (ropeTop + ropeBottom) / 2f;
+                            float dyLadder = p.Y - midY;
+                            
+                            float distSq = dxLadder * dxLadder + dyLadder * dyLadder;
+                            
+                            if (distSq < minDistSq)
+                            {
+                                minDistSq = distSq;
+                                state.NearestLadderX = ropeX;
+                                state.NearestLadderTop = ropeTop;
+                                state.NearestLadderBottom = ropeBottom;
+                            }
+                            
+                            // Check overlap (within 50px horizontally, and vertically within bounds)
+                            if (Math.Abs(dxLadder) <= 50f && p.Y >= ropeTop && p.Y <= ropeBottom)
+                            {
+                                state.IsOverlappingLadder = true;
+                            }
+                        }
+                    }
+                    
+                    // --- Portal Vision ---
+                    var portals = _portalPool?.Portals;
+                    float minPortalDistSq = float.MaxValue;
+                    state.NearestPortalX = 9999f;
+                    state.NearestPortalY = 9999f;
+                    state.IsOverlappingPortal = false;
+
+                    if (portals != null)
+                    {
+                        foreach (var portal in portals)
+                        {
+                            var inst = portal?.PortalInstance;
+                            if (inst == null) continue;
+                            // Only care about portals that can be entered (usually Normal or Hidden)
+                            // We ignore StartPoints since they can't be entered
+                            if (inst.pt == PortalType.StartPoint) continue;
+                            
+                            float dxPortal = p.X - inst.X;
+                            float dyPortal = p.Y - inst.Y;
+                            float distSq = dxPortal * dxPortal + dyPortal * dyPortal;
+                            
+                            if (distSq < minPortalDistSq)
+                            {
+                                minPortalDistSq = distSq;
+                                state.NearestPortalX = inst.X;
+                                state.NearestPortalY = inst.Y;
+                            }
+                            
+                            // Check overlap (within ~30px)
+                            if (Math.Abs(dxPortal) <= 30f && Math.Abs(dyPortal) <= 40f)
+                            {
+                                state.IsOverlappingPortal = true;
+                            }
+                        }
+                    }
+                }
+                _gymServer.SendState(state);
+                _gymServer.ClearAction();
+            }
 
             base.Update(gameTime);
         }
@@ -4243,6 +4508,31 @@ namespace HaCreator.MapSimulator
             // Save screenshot if render is activated
             _screenshotManager.ProcessScreenshot(GraphicsDevice);
 
+            // Dataset Generator Capture
+            if (_datasetGenerator.IsGenerating)
+            {
+                if (_datasetGenerator.ShouldCaptureFrame())
+                {
+                    List<(int classId, Rectangle bounds)> boundsList = new List<(int classId, Rectangle bounds)>();
+                    foreach (var mob in _mobPool.ActiveMobs)
+                    {
+                        var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
+                        if (rect != null) boundsList.Add((0, rect.Value)); // class 0 for Mob
+                    }
+
+                    // Get HP bars bounds
+                    if (_effectManager?.Combat != null)
+                    {
+                        var hpBarRects = _effectManager.Combat.GetActiveHPBarBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
+                        foreach (var hpRect in hpBarRects)
+                        {
+                            boundsList.Add((1, hpRect)); // class 1 for HP Bar
+                        }
+                    }
+
+                    _datasetGenerator.SaveFrameAndLabels(GraphicsDevice, boundsList);
+                }
+            }
 
             base.Draw(gameTime);
         }

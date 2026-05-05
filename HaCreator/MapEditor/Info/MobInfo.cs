@@ -1,4 +1,4 @@
-﻿using HaCreator.GUI;
+using HaCreator.GUI;
 using HaCreator.MapEditor.Instance;
 using HaCreator.Wz;
 using HaSharedLibrary.Wz;
@@ -76,7 +76,7 @@ namespace HaCreator.MapEditor.Info
             // Fall back to WzManager
             if (mobImage == null && Program.WzManager != null)
             {
-                mobImage = (WzImage)Program.WzManager.FindWzImageByName("mob", imgName);
+                mobImage = Program.WzManager.FindWzImageByName("mob", imgName) as WzImage;
             }
 
             if (mobImage == null)

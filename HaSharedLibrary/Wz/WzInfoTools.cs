@@ -1,4 +1,4 @@
-﻿/* Copyright (C) 2015 haha01haha01
+/* Copyright (C) 2015 haha01haha01
 
 * This Source Code Form is subject to the terms of the Mozilla Public
 * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -219,19 +219,32 @@ namespace HaSharedLibrary.Wz
         /// <returns></returns>
         public static WzDirectory FindMapDirectoryParent(string mapId, WzFileManager fileManager) {
             string mapIdNamePadded = AddLeadingZeros(mapId, 9) + ".img";
-            string mapcat = fileManager.Is64Bit ? mapIdNamePadded.Substring(0, 1) : "Map" + mapIdNamePadded.Substring(0, 1);
-            string baseDir = fileManager.Is64Bit ? "map\\map\\map" + mapcat : "map";
+            string folderNum = mapIdNamePadded.Substring(0, 1);
+            string mapcat = fileManager.Is64Bit ? folderNum : "Map" + folderNum;
 
-            WzObject mapObjectWzDir = fileManager.FindWzImageByName(baseDir, fileManager.Is64Bit ? string.Empty : "Map");
+            // Pattern 1: map.wz/Map/MapX (Standard)
+            WzObject mapObjectWzDir = fileManager.FindWzImageByName("map", "Map");
+            if (mapObjectWzDir is WzDirectory parentDir)
+            {
+                WzDirectory subDir = parentDir[mapcat] as WzDirectory;
+                if (subDir != null) return subDir;
+            }
 
-            if (fileManager.Is64Bit) {
-                //Debug.WriteLine("Init map: {0}\\{1}", baseDir, mapIdNamePadded);
-                return (WzDirectory)mapObjectWzDir;
+            // Pattern 2: map.wz/MapX (Split/Modern)
+            mapObjectWzDir = fileManager.FindWzImageByName("map", mapcat);
+            if (mapObjectWzDir is WzDirectory splitDir)
+            {
+                return splitDir;
             }
-            else {
-                WzDirectory mapImage = (WzDirectory)mapObjectWzDir?[mapcat];
-                return mapImage;
+
+            // Pattern 3: MapX.wz (Fully split files)
+            mapObjectWzDir = fileManager.FindWzImageByName(mapcat, "");
+            if (mapObjectWzDir is WzDirectory wzFileDir)
+            {
+                return wzFileDir;
             }
+
+            return null;
         }
 
         public static Color XNAToDrawingColor(Microsoft.Xna.Framework.Color c)

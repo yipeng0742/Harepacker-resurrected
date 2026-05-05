@@ -36,6 +36,13 @@ namespace HaCreator.MapSimulator.Effects
         public const int BAR_WIDTH = 60;              // Default bar width
         public const int BAR_HEIGHT = 5;              // Default bar height
 
+        // Dataset Augmentation Properties
+        public int? CustomWidth { get; set; } = null;
+        public int? CustomHeight { get; set; } = null;
+        public Color? CustomBgColor { get; set; } = null;
+        public Color? CustomBorderColor { get; set; } = null;
+        public Color? CustomHpColor { get; set; } = null;
+
         public bool ShouldFade(int currentTime)
         {
             return currentTime - LastDamageTime > DISPLAY_DURATION - FADE_DURATION;
@@ -217,8 +224,16 @@ namespace HaCreator.MapSimulator.Effects
 
         public void Update(int currentTime)
         {
-            if (IsComplete || Frames == null || Frames.Count == 0)
+            if (IsComplete)
                 return;
+
+            if (Frames == null || Frames.Count == 0)
+            {
+                // Fallback block dataset lifetime (300ms)
+                if (currentTime - SpawnTime > 300)
+                    IsComplete = true;
+                return;
+            }
 
             var frame = Frames[CurrentFrame];
             int delay = frame?.Delay ?? 100;
@@ -470,6 +485,7 @@ namespace HaCreator.MapSimulator.Effects
 
         #region Textures
         private Texture2D _pixelTexture;
+        private Texture2D _glowTexture;
         private SpriteFont _damageFont;
         private SpriteFont _criticalFont;
         private Dictionary<int, List<IDXObject>> _hitEffectFrames;  // Hit effect variations
@@ -496,8 +512,32 @@ namespace HaCreator.MapSimulator.Effects
             _pixelTexture = new Texture2D(device, 1, 1);
             _pixelTexture.SetData(new[] { Color.White });
 
+            // Create a procedural radial gradient for realistic magical skill occlusion
+            _glowTexture = CreateRadialGradient(device, 128);
+
             _hitEffectFrames = new Dictionary<int, List<IDXObject>>();
             _initialized = true;
+        }
+
+        private Texture2D CreateRadialGradient(GraphicsDevice device, int size)
+        {
+            Texture2D texture = new Texture2D(device, size, size);
+            Color[] data = new Color[size * size];
+            float center = size / 2f;
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float distance = Vector2.Distance(new Vector2(x, y), new Vector2(center, center));
+                    float alpha = 1f - (distance / center);
+                    if (alpha < 0) alpha = 0;
+                    // Smoothstep for better gradient distribution
+                    alpha = alpha * alpha * (3f - 2f * alpha);
+                    data[y * size + x] = new Color(255, 255, 255, (int)(alpha * 255));
+                }
+            }
+            texture.SetData(data);
+            return texture;
         }
 
         /// <summary>
@@ -668,11 +708,14 @@ namespace HaCreator.MapSimulator.Effects
                 _hitEffects.RemoveAt(0);
             }
 
-            if (!_hitEffectFrames.TryGetValue(variation, out var frames) || frames == null || frames.Count == 0)
+            List<IDXObject> frames = null;
+            if (_hitEffectFrames.TryGetValue(variation, out var f) && f != null && f.Count > 0)
             {
-                // Try default variation
-                if (!_hitEffectFrames.TryGetValue(0, out frames) || frames == null || frames.Count == 0)
-                    return;
+                frames = f;
+            }
+            else if (_hitEffectFrames.TryGetValue(0, out f) && f != null && f.Count > 0)
+            {
+                frames = f;
             }
 
             _hitEffects.Add(new HitEffectDisplay
@@ -989,6 +1032,22 @@ namespace HaCreator.MapSimulator.Effects
                     Alpha = 1.0f,
                     MobHeight = mobHeight
                 };
+            }
+        }
+
+        /// <summary>
+        /// Randomizes the visual properties of a mob's HP bar for dataset augmentation
+        /// </summary>
+        public void RandomizeMobHPBarForDataset(int poolId, System.Random rand)
+        {
+            if (_mobHPBars.TryGetValue(poolId, out var hpBar))
+            {
+                hpBar.CustomWidth = rand.Next(30, 100);
+                hpBar.CustomHeight = rand.Next(3, 9);
+                hpBar.LastHpPercent = 0.1f + (float)rand.NextDouble() * 0.9f; // 10% to 100%
+                hpBar.CustomHpColor = new Color(rand.Next(0, 100), rand.Next(160, 255), rand.Next(0, 50));
+                hpBar.CustomBgColor = new Color(rand.Next(20, 80), rand.Next(20, 80), rand.Next(20, 80));
+                hpBar.CustomBorderColor = new Color(rand.Next(0, 30), rand.Next(0, 30), rand.Next(0, 30));
             }
         }
 
@@ -1459,8 +1518,8 @@ namespace HaCreator.MapSimulator.Effects
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void DrawSingleMobHPBar(SpriteBatch spriteBatch, MobHPBarDisplay hpBar, int screenX, int screenY)
         {
-            int barWidth = MobHPBarDisplay.BAR_WIDTH;
-            int barHeight = MobHPBarDisplay.BAR_HEIGHT;
+            int barWidth = hpBar.CustomWidth ?? MobHPBarDisplay.BAR_WIDTH;
+            int barHeight = hpBar.CustomHeight ?? MobHPBarDisplay.BAR_HEIGHT;
 
             // Position bar at mob's top (screenY is feet position, subtract height to get top)
             int mobHeight = hpBar.MobHeight;
@@ -1470,21 +1529,25 @@ namespace HaCreator.MapSimulator.Effects
             float alpha = hpBar.Alpha;
             float hpPercent = hpBar.LastHpPercent;
 
+            Color borderColor = hpBar.CustomBorderColor ?? COLOR_HPBAR_BORDER;
+            Color bgColor = hpBar.CustomBgColor ?? COLOR_HPBAR_BG;
+
             // Draw background (dark)
             spriteBatch.Draw(_pixelTexture,
                 new Rectangle(x - 1, y - 1, barWidth + 2, barHeight + 2),
-                COLOR_HPBAR_BORDER * alpha);
+                borderColor * alpha);
 
             spriteBatch.Draw(_pixelTexture,
                 new Rectangle(x, y, barWidth, barHeight),
-                COLOR_HPBAR_BG * alpha);
+                bgColor * alpha);
 
             // Draw HP bar
             int hpWidth = (int)(barWidth * hpPercent);
             if (hpWidth > 0)
             {
                 // Use different color when HP is low
-                Color hpColor = hpPercent > 0.3f ? COLOR_HPBAR_HP : COLOR_HPBAR_HP_LOW;
+                Color baseHpColor = hpPercent > 0.3f ? COLOR_HPBAR_HP : COLOR_HPBAR_HP_LOW;
+                Color hpColor = hpBar.CustomHpColor ?? baseHpColor;
                 spriteBatch.Draw(_pixelTexture,
                     new Rectangle(x, y, hpWidth, barHeight),
                     hpColor * alpha);
@@ -1498,6 +1561,49 @@ namespace HaCreator.MapSimulator.Effects
                         highlightColor);
                 }
             }
+        }
+
+        /// <summary>
+        /// Gets the bounding boxes of all currently active regular mob HP bars.
+        /// Useful for dataset generation (e.g., YOLO object detection annotations).
+        /// </summary>
+        public List<Rectangle> GetActiveHPBarBounds(int mapShiftX, int mapShiftY, int centerX, int centerY, float scale)
+        {
+            var boundsList = new List<Rectangle>();
+
+            foreach (var kvp in _mobHPBars)
+            {
+                var hpBar = kvp.Value;
+                var mob = hpBar.Mob;
+
+                if (!hpBar.IsVisible || mob == null || mob.MovementInfo == null)
+                    continue;
+
+                if (mob.AI != null && mob.AI.IsDead)
+                    continue;
+
+                int barWidth = hpBar.CustomWidth ?? MobHPBarDisplay.BAR_WIDTH;
+                int barHeight = hpBar.CustomHeight ?? MobHPBarDisplay.BAR_HEIGHT;
+
+                int scaledBarWidth = (int)(barWidth * scale);
+                int scaledBarHeight = (int)(barHeight * scale);
+
+                float mobX = mob.MovementInfo.X;
+                float mobY = mob.MovementInfo.Y;
+
+                int screenX = (int)mobX - mapShiftX + centerX;
+                int screenY = (int)mobY - mapShiftY + centerY;
+
+                int mobHeight = hpBar.MobHeight;
+                
+                // Base coordinates without scale
+                int x = screenX - (barWidth / 2);
+                int y = screenY - mobHeight - barHeight;
+
+                boundsList.Add(new Rectangle((int)(x * scale), (int)(y * scale), scaledBarWidth, scaledBarHeight));
+            }
+
+            return boundsList;
         }
 
         private void DrawDamageNumbers(SpriteBatch spriteBatch, int mapShiftX, int mapShiftY, int centerX, int centerY)
@@ -1563,7 +1669,23 @@ namespace HaCreator.MapSimulator.Effects
         {
             foreach (var effect in _hitEffects)
             {
-                if (effect.Frames == null || effect.CurrentFrame >= effect.Frames.Count)
+                if (effect.Frames == null || effect.Frames.Count == 0)
+                {
+                    // Fallback dataset occlusion block (Procedural Skill Explosion)
+                    if (_glowTexture != null)
+                    {
+                        int fallbackX = (int)effect.X - mapShiftX + centerX;
+                        int fallbackY = (int)effect.Y - mapShiftY + centerY;
+                        
+                        // Center the 128x128 texture
+                        Rectangle destRect = new Rectangle(fallbackX - 64, fallbackY - 64, 128, 128);
+                        
+                        spriteBatch.Draw(_glowTexture, destRect, effect.Tint);
+                    }
+                    continue;
+                }
+
+                if (effect.CurrentFrame >= effect.Frames.Count)
                     continue;
 
                 var frame = effect.Frames[effect.CurrentFrame];

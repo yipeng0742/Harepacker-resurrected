@@ -633,6 +633,13 @@ namespace HaCreator.MapSimulator.Entities
                 SetAction(targetAction);
                 return;
             }
+            
+            // Check if dataset generator forced a state
+            if (_datasetForcedState != null && _animationSet.HasAnimation(_datasetForcedState))
+            {
+                SetAction(_datasetForcedState);
+                return;
+            }
 
             // AI aggressive state (chase/attack) takes priority over movement state
             if (AIEnabled && AI != null && AI.IsAggressive)
@@ -696,6 +703,65 @@ namespace HaCreator.MapSimulator.Entities
             }
 
             SetAction(targetAction);
+        }
+
+        private string _datasetForcedState = null;
+
+        /// <summary>
+        /// Used by DatasetGenerator to force a state.
+        /// </summary>
+        public void ForceStateForDataset(string action)
+        {
+            _datasetForcedState = action;
+        }
+
+        /// <summary>
+        /// Used by DatasetGenerator to get screen-space bounding box.
+        /// </summary>
+        public Rectangle? GetScreenBounds(int mapShiftX, int mapShiftY, int centerX, int centerY, float scale)
+        {
+            IDXObject frame = GetCurrentAnimationFrame(0);
+            if (frame == null) return null;
+
+            int positionOffsetX = 0;
+            int positionOffsetY = 0;
+
+            if (MovementEnabled && MovementInfo != null)
+            {
+                positionOffsetX = (int)(MovementInfo.X - _mobInstance.X);
+                positionOffsetY = (int)(MovementInfo.Y - _mobInstance.Y);
+            }
+
+            int adjustedMapShiftX = mapShiftX - positionOffsetX;
+            int adjustedMapShiftY = mapShiftY - positionOffsetY;
+            int shiftCenteredX = adjustedMapShiftX - centerX;
+            int shiftCenteredY = adjustedMapShiftY - centerY;
+
+            int adjustedShiftX = shiftCenteredX;
+            var currentFrames = _animationController?.CurrentFrames;
+            if (currentFrames != null && currentFrames.Count > 0 && flip)
+            {
+                IDXObject frame0 = currentFrames[0];
+                int originAdjustX = frame0.X - frame.X;
+                adjustedShiftX = shiftCenteredX - originAdjustX;
+            }
+
+            int drawX;
+            if (flip)
+            {
+                drawX = adjustedShiftX - frame.Width + frame.X;
+            }
+            else
+            {
+                drawX = adjustedShiftX - frame.X;
+            }
+            int drawY = shiftCenteredY - frame.Y;
+
+            return new Rectangle(
+                (int)(drawX * scale), 
+                (int)(drawY * scale), 
+                (int)(frame.Width * scale), 
+                (int)(frame.Height * scale));
         }
 
         /// <summary>

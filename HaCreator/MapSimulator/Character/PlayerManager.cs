@@ -32,6 +32,7 @@ namespace HaCreator.MapSimulator.Character
 
         public bool IsPlayerActive => Player != null && Player.IsAlive;
         public bool IsPlayerControlEnabled { get; set; } = true;
+        public bool IsGymControlled { get; set; } = false;
 
         // Spawn point
         private Vector2 _spawnPoint;
@@ -425,8 +426,8 @@ namespace HaCreator.MapSimulator.Character
                 return;
             }
 
-            // Apply input to player only if chat is not active
-            if (IsPlayerControlEnabled && !chatIsActive)
+            // Apply input to player only if chat is not active and not gym controlled
+            if (IsPlayerControlEnabled && !chatIsActive && !IsGymControlled)
             {
                 Input.ApplyToPlayer(Player);
 

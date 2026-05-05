@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -584,7 +584,10 @@ namespace HaCreator.Wz
             // Fall back to WzManager
             if (tooltipsStringImage == null && Program.WzManager != null)
             {
-                tooltipsStringImage = (WzImage)Program.WzManager.FindWzImageByName("string", "ToolTipHelp.img");
+                WzObject tooltipsObj = Program.WzManager.FindWzImageByName("string", "ToolTipHelp.img") ?? Program.WzManager.FindWzImageByName("string", "ToolTipHelp");
+                tooltipsStringImage = tooltipsObj as WzImage;
+                // If it's a directory, we can't easily handle it here because the code expects a specific image structure.
+                // However, as an image is a WzObject, tooltipsObj as WzImage will be null if it's a directory, avoiding the crash.
             }
 
             if (tooltipsStringImage == null)
