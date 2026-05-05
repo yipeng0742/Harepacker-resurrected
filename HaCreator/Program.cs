@@ -6,6 +6,7 @@ using HaCreator.MapEditor;
 using System.Runtime.InteropServices;
 using MapleLib.WzLib;
 using HaCreator.GUI;
+using HaCreator.MapSimulator.Automation;
 using System.IO;
 using System.Globalization;
 using System.Threading;
@@ -180,7 +181,7 @@ namespace HaCreator
         /// The main entry point for the application.
         /// </summary>
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
@@ -210,6 +211,20 @@ namespace HaCreator
             // Initialize StartupManager for IMG filesystem support
             StartupManager = new StartupManager();
             StartupManager.ScanVersions();
+
+            if (AutoCaptureCliRunner.IsAutoCaptureMode(args))
+            {
+                int exitCode = AutoCaptureCliRunner.Run(args);
+                SettingsManager.SaveSettings();
+                StartupManager?.SaveConfig();
+                DataSource?.Dispose();
+                if (WzManager != null)
+                {
+                    WzManager.Dispose();
+                }
+                Environment.Exit(exitCode);
+                return;
+            }
 
             MultiBoard.RecalculateSettings();
             Application.EnableVisualStyles();

@@ -1,6 +1,7 @@
 using HaCreator.MapEditor.Instance;
 using HaCreator.MapSimulator.AI;
 using HaCreator.MapSimulator.Animation;
+using HaCreator.MapSimulator.Automation;
 using HaCreator.MapSimulator.Core;
 using HaSharedLibrary;
 using HaSharedLibrary.Render;
@@ -130,6 +131,8 @@ namespace HaCreator.MapSimulator.Entities
         /// </summary>
         public void PlayDamageSound()
         {
+            if (AutoCaptureRuntime.IsAudioMuted)
+                return;
             Debug.WriteLine(DamageSE != null ? "[MobItem] DamageSE not null - playing" : "[MobItem] DamageSE is null");
             DamageSE?.Play();
         }
@@ -139,6 +142,8 @@ namespace HaCreator.MapSimulator.Entities
         /// </summary>
         public void PlayDieSound()
         {
+            if (AutoCaptureRuntime.IsAudioMuted)
+                return;
             Debug.WriteLine(DieSE != null ? "[MobItem] DieSE not null - playing" : "[MobItem] DieSE is null");
             DieSE?.Play();
         }
@@ -149,6 +154,8 @@ namespace HaCreator.MapSimulator.Entities
         /// <param name="attackNum">1 for Attack1, 2 for Attack2</param>
         public void PlayAttackSound(int attackNum = 1)
         {
+            if (AutoCaptureRuntime.IsAudioMuted)
+                return;
             if (attackNum == 2 && Attack2SE != null)
             {
                 Attack2SE.Play();
@@ -165,6 +172,8 @@ namespace HaCreator.MapSimulator.Entities
         /// <param name="damNum">1 for CharDam1, 2 for CharDam2</param>
         public void PlayCharDamSound(int damNum = 1)
         {
+            if (AutoCaptureRuntime.IsAudioMuted)
+                return;
             if (damNum == 2 && CharDam2SE != null)
             {
                 CharDam2SE.Play();
@@ -619,6 +628,13 @@ namespace HaCreator.MapSimulator.Entities
 
             string targetAction;
 
+            // Dataset mode force state has the highest priority when present.
+            if (_datasetForcedState != null && _animationSet.HasAnimation(_datasetForcedState))
+            {
+                SetAction(_datasetForcedState);
+                return;
+            }
+
             // Check for death/hit states first - these always take priority
             if (AIEnabled && AI != null && (AI.State == MobAIState.Death || AI.State == MobAIState.Removed))
             {
@@ -631,13 +647,6 @@ namespace HaCreator.MapSimulator.Entities
             {
                 targetAction = _animationSet.HasAnimation("hit1") ? "hit1" : "stand";
                 SetAction(targetAction);
-                return;
-            }
-            
-            // Check if dataset generator forced a state
-            if (_datasetForcedState != null && _animationSet.HasAnimation(_datasetForcedState))
-            {
-                SetAction(_datasetForcedState);
                 return;
             }
 
@@ -713,6 +722,67 @@ namespace HaCreator.MapSimulator.Entities
         public void ForceStateForDataset(string action)
         {
             _datasetForcedState = action;
+        }
+
+        public bool HasAnimationAction(string action)
+        {
+            return !string.IsNullOrWhiteSpace(action) && _animationSet != null && _animationSet.HasAnimation(action);
+        }
+
+        public string PickFirstAvailableAction(params string[] actions)
+        {
+            if (_animationSet == null || actions == null)
+                return null;
+
+            foreach (string action in actions)
+            {
+                if (!string.IsNullOrWhiteSpace(action) && _animationSet.HasAnimation(action))
+                {
+                    return action;
+                }
+            }
+
+            return null;
+        }
+
+        public string PickRandomActionByPrefixes(Random random, params string[] prefixes)
+        {
+            if (_animationSet == null || prefixes == null || prefixes.Length == 0)
+                return null;
+
+            var actions = _animationSet.GetAvailableActionsList();
+            if (actions == null || actions.Count == 0)
+                return null;
+
+            var matched = new List<string>();
+            for (int i = 0; i < actions.Count; i++)
+            {
+                string action = actions[i];
+                if (string.IsNullOrWhiteSpace(action))
+                    continue;
+
+                for (int p = 0; p < prefixes.Length; p++)
+                {
+                    string prefix = prefixes[p];
+                    if (string.IsNullOrWhiteSpace(prefix))
+                        continue;
+
+                    if (action.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        matched.Add(action);
+                        break;
+                    }
+                }
+            }
+
+            if (matched.Count == 0)
+                return null;
+
+            if (random == null)
+                return matched[0];
+
+            int idx = random.Next(matched.Count);
+            return matched[idx];
         }
 
         /// <summary>

@@ -40,6 +40,7 @@ using HaCreator.MapSimulator.Effects;
 using HaCreator.MapSimulator.Fields;
 using HaCreator.MapSimulator.Managers;
 using HaCreator.MapSimulator.Core;
+using HaCreator.MapSimulator.Automation;
 
 namespace HaCreator.MapSimulator
 {
@@ -202,6 +203,16 @@ namespace HaCreator.MapSimulator
 
         // Dataset Generator
         private readonly DatasetGenerator _datasetGenerator = new DatasetGenerator();
+        private readonly AutoCaptureRunOptions _autoCaptureOptions = AutoCaptureRuntime.Current;
+        private bool _autoCaptureStarted = false;
+        private List<Point> _autoCaptureScanPath;
+        private int _autoCaptureScanIndex = 0;
+        private int _autoCaptureFrameBudget = 0;
+        private Random _autoCaptureRandom;
+        private AutoCaptureProfile _autoCaptureCurrentProfile = AutoCaptureProfile.NormalMove;
+        private int _autoCaptureProfileSwitchTick = 0;
+        private Dictionary<AutoCaptureProfile, int> _autoCaptureProfileMix = AutoCaptureRunOptions.CreateDefaultProfileMix();
+        private int _autoCaptureLastProfileLogFrame = -1;
 
         // Map state cache for maintaining entity positions across map transitions
         private readonly MapStateCache _mapStateCache = new MapStateCache();
@@ -274,6 +285,309 @@ namespace HaCreator.MapSimulator
         public void SetLoadMapCallback(Func<int, Tuple<Board, string>> callback)
         {
             _loadMapCallback = callback;
+        }
+
+        private bool IsAutoCaptureEnabled => _autoCaptureOptions != null;
+        private bool IsAutoCaptureAudioMuted => IsAutoCaptureEnabled && (_autoCaptureOptions?.MuteAudio ?? true);
+
+        private void InitializeAutoCaptureIfNeeded()
+        {
+            if (!IsAutoCaptureEnabled || _autoCaptureStarted)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(_autoCaptureOptions.OutputDir))
+            {
+                _datasetGenerator.ConfigureOutputDirectory(_autoCaptureOptions.OutputDir);
+            }
+            _datasetGenerator.StartGeneration();
+            _gameState.HideUIMode = true;
+            _gameState.PlayerControlEnabled = false;
+            _gameState.MobMovementEnabled = true;
+            // AutoCapture must not be overridden by smooth camera follow/freecam interpolation.
+            _gameState.UseSmoothCamera = false;
+
+            _autoCaptureFrameBudget = Math.Max(1, _autoCaptureOptions.TargetFrames);
+            _autoCaptureProfileMix = _autoCaptureOptions.GetNormalizedProfileMix();
+            int runtimeSeed = _autoCaptureOptions.Seed ^ _autoCaptureOptions.MapId ^ (_autoCaptureOptions.ResolutionName?.GetHashCode() ?? 0);
+            _autoCaptureRandom = new Random(runtimeSeed);
+            _autoCaptureCurrentProfile = SelectProfileByWeight(_autoCaptureRandom, _autoCaptureProfileMix);
+            _autoCaptureProfileSwitchTick = Environment.TickCount;
+            BuildAutoCaptureScanPath();
+            _autoCaptureStarted = true;
+
+            System.Console.WriteLine(
+                $"[AutoCap] map={_autoCaptureOptions.MapId:D9} res={_autoCaptureOptions.ResolutionName} targetFrames={_autoCaptureFrameBudget} scanPoints={_autoCaptureScanPath?.Count ?? 0} seed={runtimeSeed}");
+        }
+
+        private void BuildAutoCaptureScanPath()
+        {
+            _autoCaptureScanPath = new List<Point>();
+
+            int minX = (int)(_vrFieldBoundary.Left * _renderParams.RenderObjectScaling);
+            int maxX = (int)(_vrFieldBoundary.Right - (_renderParams.RenderWidth / _renderParams.RenderObjectScaling));
+            int minY = (int)(_vrFieldBoundary.Top * _renderParams.RenderObjectScaling);
+            int maxY = (int)(_vrFieldBoundary.Bottom - (_renderParams.RenderHeight / _renderParams.RenderObjectScaling));
+
+            int stepX = Math.Max(16, (int)(_autoCaptureOptions.StepX * _renderParams.RenderObjectScaling));
+            int stepY = Math.Max(16, (int)(_autoCaptureOptions.StepY * _renderParams.RenderObjectScaling));
+
+            if (maxX < minX)
+            {
+                int centerX = ((int)(_vrFieldBoundary.Left + _vrFieldBoundary.Right) / 2) - (_renderParams.RenderWidth / 2);
+                minX = maxX = centerX;
+            }
+            if (maxY < minY)
+            {
+                int centerY = ((int)(_vrFieldBoundary.Top + _vrFieldBoundary.Bottom) / 2) - (_renderParams.RenderHeight / 2);
+                minY = maxY = centerY;
+            }
+
+            int row = 0;
+            for (int y = minY; y <= maxY; y += stepY)
+            {
+                if (row % 2 == 0)
+                {
+                    for (int x = minX; x <= maxX; x += stepX)
+                    {
+                        _autoCaptureScanPath.Add(new Point(x, y));
+                    }
+                }
+                else
+                {
+                    for (int x = maxX; x >= minX; x -= stepX)
+                    {
+                        _autoCaptureScanPath.Add(new Point(x, y));
+                    }
+                }
+                row++;
+            }
+
+            if (_autoCaptureScanPath.Count == 0)
+            {
+                _autoCaptureScanPath.Add(new Point(minX, minY));
+            }
+        }
+
+        private void TickAutoCaptureCamera()
+        {
+            if (!IsAutoCaptureEnabled || !_autoCaptureStarted || _autoCaptureScanPath == null || _autoCaptureScanPath.Count == 0)
+                return;
+
+            Point p = _autoCaptureScanPath[_autoCaptureScanIndex % _autoCaptureScanPath.Count];
+            mapShiftX = p.X;
+            mapShiftY = p.Y;
+            ClampCameraToBoundaries();
+            _autoCaptureScanIndex++;
+        }
+
+        private static AutoCaptureProfile SelectProfileByWeight(Random random, Dictionary<AutoCaptureProfile, int> mix)
+        {
+            if (random == null || mix == null || mix.Count == 0)
+            {
+                return AutoCaptureProfile.NormalMove;
+            }
+
+            int total = mix.Values.Where(v => v > 0).Sum();
+            if (total <= 0)
+            {
+                return AutoCaptureProfile.NormalMove;
+            }
+
+            int roll = random.Next(total);
+            int acc = 0;
+            foreach (var kv in mix)
+            {
+                if (kv.Value <= 0)
+                    continue;
+
+                acc += kv.Value;
+                if (roll < acc)
+                {
+                    return kv.Key;
+                }
+            }
+
+            return AutoCaptureProfile.NormalMove;
+        }
+
+        private void RotateAutoCaptureProfileIfNeeded(int tick)
+        {
+            if (!IsAutoCaptureEnabled || _autoCaptureRandom == null)
+                return;
+
+            if (unchecked(tick - _autoCaptureProfileSwitchTick) < 850)
+                return;
+
+            _autoCaptureCurrentProfile = SelectProfileByWeight(_autoCaptureRandom, _autoCaptureProfileMix);
+            _autoCaptureProfileSwitchTick = tick;
+        }
+
+        private void ApplyAutoCaptureAugmentation(int tick)
+        {
+            if (!_datasetGenerator.IsGenerating || _mobPool?.ActiveMobs == null)
+                return;
+
+            RotateAutoCaptureProfileIfNeeded(tick);
+            int capturedFrames = _datasetGenerator.CapturedFrameCount;
+            if (capturedFrames > 0 && capturedFrames % 30 == 0 && capturedFrames != _autoCaptureLastProfileLogFrame)
+            {
+                _autoCaptureLastProfileLogFrame = capturedFrames;
+                System.Console.WriteLine($"[AutoCap][Profile] frame={capturedFrames} profile={_autoCaptureCurrentProfile}");
+            }
+            var combat = _effectManager?.Combat;
+
+            foreach (var mob in _mobPool.ActiveMobs)
+            {
+                mob.ForceStateForDataset(null);
+            }
+
+            foreach (var mob in _mobPool.ActiveMobs)
+            {
+                switch (_autoCaptureCurrentProfile)
+                {
+                    case AutoCaptureProfile.NormalMove:
+                    {
+                        if (_autoCaptureRandom.NextDouble() < 0.35)
+                        {
+                            string moveAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "move", "walk", "fly", "jump", "stand");
+                            if (!string.IsNullOrEmpty(moveAction))
+                            {
+                                mob.ForceStateForDataset(moveAction);
+                            }
+                        }
+                        if (combat != null && _autoCaptureRandom.NextDouble() < 0.45)
+                        {
+                            TriggerAutoCaptureDamageVisuals(combat, mob, tick);
+                        }
+                        break;
+                    }
+                    case AutoCaptureProfile.AttackHeavy:
+                    {
+                        if (_autoCaptureRandom.NextDouble() < 0.90)
+                        {
+                            string attackAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "attack", "skill", "magic", "cast");
+                            if (!string.IsNullOrEmpty(attackAction))
+                            {
+                                mob.ForceStateForDataset(attackAction);
+                            }
+                        }
+                        if (combat != null && _autoCaptureRandom.NextDouble() < 0.60)
+                        {
+                            TriggerAutoCaptureDamageVisuals(combat, mob, tick);
+                        }
+                        break;
+                    }
+                    case AutoCaptureProfile.HitOcclusionHeavy:
+                    {
+                        if (_autoCaptureRandom.NextDouble() < 0.45)
+                        {
+                            string hitAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "hit", "damage", "dam");
+                            if (!string.IsNullOrEmpty(hitAction))
+                            {
+                                mob.ForceStateForDataset(hitAction);
+                            }
+                        }
+                        if (combat != null)
+                        {
+                            if (_autoCaptureRandom.NextDouble() < 0.75)
+                            {
+                                TriggerAutoCaptureDamageVisuals(combat, mob, tick);
+                            }
+
+                            if (_autoCaptureRandom.NextDouble() < 0.30)
+                            {
+                                int count = _autoCaptureRandom.Next(1, 4);
+                                for (int i = 0; i < count; i++)
+                                {
+                                    float xOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 150);
+                                    float yOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 140);
+                                    combat.AddHitEffect(
+                                        mob.CurrentX + xOffset,
+                                        mob.CurrentY + yOffset - 28,
+                                        tick,
+                                        _autoCaptureRandom.Next(0, 4),
+                                        _autoCaptureRandom.NextDouble() > 0.5,
+                                        null);
+                                }
+                            }
+                        }
+                        break;
+                    }
+                    case AutoCaptureProfile.DeathHeavy:
+                    {
+                        bool forcedDead = false;
+                        if (_autoCaptureRandom.NextDouble() < 0.80)
+                        {
+                            string dieAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "die", "dead", "death");
+                            if (!string.IsNullOrEmpty(dieAction))
+                            {
+                                mob.ForceStateForDataset(dieAction);
+                                forcedDead = true;
+                            }
+                        }
+
+                        if (!forcedDead && _autoCaptureRandom.NextDouble() < 0.20)
+                        {
+                            string hitAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "hit", "damage", "dam");
+                            if (!string.IsNullOrEmpty(hitAction))
+                            {
+                                mob.ForceStateForDataset(hitAction);
+                            }
+                        }
+
+                        if (combat != null && forcedDead && _autoCaptureRandom.NextDouble() < 0.25)
+                        {
+                            combat.AddDeathEffectForMob(mob, tick);
+                        }
+                        if (combat != null && _autoCaptureRandom.NextDouble() < 0.55)
+                        {
+                            TriggerAutoCaptureDamageVisuals(combat, mob, tick);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void TriggerAutoCaptureDamageVisuals(CombatEffects combat, MobItem mob, int tick)
+        {
+            if (combat == null || mob == null)
+                return;
+
+            combat.OnMobDamaged(mob, tick);
+            combat.RandomizeMobHPBarForDataset(mob.PoolId, _autoCaptureRandom);
+
+            // Keep floating damage numbers visible in AutoCap outputs.
+            int damage = _autoCaptureRandom != null
+                ? _autoCaptureRandom.Next(1200, 280000)
+                : 10000;
+            bool isCritical = _autoCaptureRandom?.NextDouble() < 0.28;
+            int comboIndex = _autoCaptureRandom?.Next(0, 3) ?? 0;
+            combat.AddPlayerDamage(
+                damage,
+                mob.CurrentX,
+                mob.CurrentY - 24f,
+                isCritical,
+                tick,
+                comboIndex);
+        }
+
+        private static int ResolveMobLabelClassId(MobItem mob)
+        {
+            if (mob?.AI?.IsDead == true)
+                return 1;
+
+            string action = mob?.CurrentAction;
+            if (!string.IsNullOrEmpty(action))
+            {
+                string s = action.ToLowerInvariant();
+                if (s.StartsWith("die", StringComparison.Ordinal) ||
+                    s.StartsWith("dead", StringComparison.Ordinal) ||
+                    s.StartsWith("death", StringComparison.Ordinal))
+                    return 1;
+            }
+
+            return 0;
         }
 
 
@@ -443,9 +757,12 @@ namespace HaCreator.MapSimulator
 
         protected override void Initialize()
         {
-            // Initialize Gym IPC Server
-            _gymServer = new IPC.GymServer();
-            _gymServer.Start(5555);
+            // Gym IPC 仅在交互调试模式下启用，AutoCap 模式禁用端口监听避免冲突。
+            if (!IsAutoCaptureEnabled)
+            {
+                _gymServer = new IPC.GymServer();
+                _gymServer.Start(5555);
+            }
             
             // TODO: Add your initialization logic here
 
@@ -525,7 +842,7 @@ namespace HaCreator.MapSimulator
             {
                 _currentBgmName = _mapBoard.MapInfo.bgm;
                 _audio = new WzSoundResourceStreamer(Program.InfoManager.BGMs[_mapBoard.MapInfo.bgm], true);
-                if (_audio != null)
+                if (_audio != null && !IsAutoCaptureAudioMuted)
                 {
                     _audio.Play();
                 }
@@ -533,6 +850,10 @@ namespace HaCreator.MapSimulator
 
             // Sound effects from Sound.wz/Game.img - using SoundManager for concurrent playback
             _soundManager = new SoundManager();
+            if (IsAutoCaptureAudioMuted)
+            {
+                _soundManager.Volume = 0f;
+            }
             WzImage soundGameImage = Program.FindImage("Sound", "Game.img");
             if (soundGameImage != null)
             {
@@ -987,6 +1308,7 @@ namespace HaCreator.MapSimulator
                 obj.MSTagSpine = null; // cleanup
             }
             usedProps.Clear();
+            InitializeAutoCaptureIfNeeded();
 
         }
 
@@ -1027,6 +1349,13 @@ namespace HaCreator.MapSimulator
 
         protected override void UnloadContent()
         {
+            try
+            {
+                _gymServer?.Dispose();
+                _gymServer = null;
+            }
+            catch { }
+
             if (_audio != null)
             {
                 //_audio.Pause();
@@ -1222,6 +1551,12 @@ namespace HaCreator.MapSimulator
 
             // BGM - only reload if different from current BGM
             string newBgmName = _mapBoard.MapInfo.bgm;
+            if (IsAutoCaptureAudioMuted && _audio != null)
+            {
+                _audio.Dispose();
+                _audio = null;
+                _currentBgmName = null;
+            }
             if (_currentBgmName != newBgmName)
             {
                 // Different BGM - dispose old and load new
@@ -1235,7 +1570,10 @@ namespace HaCreator.MapSimulator
                 {
                     _currentBgmName = newBgmName;
                     _audio = new WzSoundResourceStreamer(Program.InfoManager.BGMs[newBgmName], true);
-                    _audio?.Play();
+                    if (!IsAutoCaptureAudioMuted)
+                    {
+                        _audio?.Play();
+                    }
                 }
                 else
                 {
@@ -1560,6 +1898,7 @@ namespace HaCreator.MapSimulator
                 obj.MSTagSpine = null;
             }
             usedProps.Clear();
+            InitializeAutoCaptureIfNeeded();
         }
 
         /// <summary>
@@ -1935,6 +2274,20 @@ namespace HaCreator.MapSimulator
                     _oldKeyboardState = newKeyboardState;
                     _oldMouseState = newMouseState;
                     // Freeze game tick until action is received
+                    return;
+                }
+            }
+
+            if (IsAutoCaptureEnabled)
+            {
+                // 自动采集模式下由调度器驱动相机，禁用人工输入依赖。
+                TickAutoCaptureCamera();
+                if (_datasetGenerator.CapturedFrameCount >= _autoCaptureFrameBudget && _autoCaptureFrameBudget > 0)
+                {
+                    _datasetGenerator.StopGeneration();
+                    System.Console.WriteLine(
+                        $"[AutoCap] map={_autoCaptureOptions.MapId:D9} res={_autoCaptureOptions.ResolutionName} done frames={_datasetGenerator.CapturedFrameCount}");
+                    Exit();
                     return;
                 }
             }
@@ -2691,55 +3044,7 @@ namespace HaCreator.MapSimulator
             // --- DATASET GENERATOR DATA AUGMENTATION ---
             if (_datasetGenerator.IsGenerating)
             {
-                Random rand = new Random(currTickCount);
-                foreach (var mob in _mobPool.ActiveMobs)
-                {
-                    if (rand.NextDouble() < 0.3) // 30% chance to be in hit state with damage
-                    {
-                        mob.ForceStateForDataset("hit1");
-                        
-                        // 10% chance to trigger a massive damage cascade
-                        if (rand.NextDouble() < 0.1) 
-                        {
-                            int cascadeCount = rand.Next(3, 7); // 3 to 6 overlapping numbers
-                            for (int i = 0; i < cascadeCount; i++)
-                            {
-                                float dmgX = mob.CurrentX + (float)((rand.NextDouble() - 0.5) * 60);
-                                float dmgY = mob.CurrentY - 30 + (float)((rand.NextDouble() - 0.5) * 60);
-                                _effectManager.Combat.AddPlayerDamage(rand.Next(10000, 999999), dmgX, dmgY, rand.NextDouble() > 0.5, currTickCount);
-                            }
-                        }
-                        
-                        // 20% chance to spawn heavy occlusion skill effects to simulate combat blindspots
-                        if (rand.NextDouble() < 0.2) 
-                        {
-                            int particleCount = rand.Next(2, 6); // 2 to 5 overlapping procedural glow particles
-                            for (int i = 0; i < particleCount; i++)
-                            {
-                                float xOffset = (float)((rand.NextDouble() - 0.5) * 160);
-                                float yOffset = (float)((rand.NextDouble() - 0.5) * 160);
-                                Color randomTint = new Color(
-                                    rand.Next(100, 255), 
-                                    rand.Next(100, 255), 
-                                    rand.Next(100, 255), 
-                                    rand.Next(120, 200));
-                                    
-                                _effectManager.Combat.AddHitEffect(mob.CurrentX + xOffset, mob.CurrentY + yOffset - 30, currTickCount, rand.Next(0, 4), rand.NextDouble() > 0.5, randomTint);
-                            }
-                        }
-
-                        // Randomly display the green Mob HP bar to allow YOLO model to recognize it
-                        if (rand.NextDouble() < 0.5) 
-                        {
-                            _effectManager.Combat.OnMobDamaged(mob, currTickCount);
-                            _effectManager.Combat.RandomizeMobHPBarForDataset(mob.PoolId, rand);
-                        }
-                    }
-                    else
-                    {
-                        mob.ForceStateForDataset(null);
-                    }
-                }
+                ApplyAutoCaptureAugmentation(currTickCount);
             }
             // --- GYM SERVER STATE EXPORT ---
             if (_gymMode && _gymServer?.PendingAction != null)
@@ -4514,10 +4819,25 @@ namespace HaCreator.MapSimulator
                 if (_datasetGenerator.ShouldCaptureFrame())
                 {
                     List<(int classId, Rectangle bounds)> boundsList = new List<(int classId, Rectangle bounds)>();
-                    foreach (var mob in _mobPool.ActiveMobs)
+                    if (_mobPool != null)
                     {
-                        var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
-                        if (rect != null) boundsList.Add((0, rect.Value)); // class 0 for Mob
+                        foreach (var mob in _mobPool.ActiveMobs)
+                        {
+                            var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
+                            if (rect != null)
+                            {
+                                boundsList.Add((ResolveMobLabelClassId(mob), rect.Value));
+                            }
+                        }
+
+                        foreach (var mob in _mobPool.DyingMobs)
+                        {
+                            var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
+                            if (rect != null)
+                            {
+                                boundsList.Add((1, rect.Value)); // class 1 for dead/dying mob
+                            }
+                        }
                     }
 
                     // Get HP bars bounds
@@ -4526,7 +4846,7 @@ namespace HaCreator.MapSimulator
                         var hpBarRects = _effectManager.Combat.GetActiveHPBarBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
                         foreach (var hpRect in hpBarRects)
                         {
-                            boundsList.Add((1, hpRect)); // class 1 for HP Bar
+                            boundsList.Add((2, hpRect)); // class 2 for HP Bar
                         }
                     }
 

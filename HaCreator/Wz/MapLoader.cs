@@ -1044,7 +1044,7 @@ namespace HaCreator.Wz
                 mapBoard.Loading = false;
 
                 // LBTop LBBottom LBSide
-                multiBoard.HaCreatorStateManager.UpdateEditorPanelVisibility();
+                multiBoard.HaCreatorStateManager?.UpdateEditorPanelVisibility();
             }
 
             const string OUTPUT_ERROR_FILENAME = "Errors_MapLoader.txt";
@@ -1104,7 +1104,7 @@ namespace HaCreator.Wz
                 {
                     item.Tag = newTabPage;
                 }
-                multiBoard.HaCreatorStateManager.UpdateEditorPanelVisibility();
+                multiBoard.HaCreatorStateManager?.UpdateEditorPanelVisibility();
             }
         }
 
