@@ -219,6 +219,8 @@ namespace HaCreator.MapSimulator.Effects
         public int LastFrameTime { get; set; }
         public bool Flip { get; set; }
         public Color Tint { get; set; } = Color.White;
+        public float Scale { get; set; } = 1.0f;
+        public int LifetimeMs { get; set; } = 300;
 
         public bool IsComplete { get; private set; }
 
@@ -230,7 +232,7 @@ namespace HaCreator.MapSimulator.Effects
             if (Frames == null || Frames.Count == 0)
             {
                 // Fallback block dataset lifetime (300ms)
-                if (currentTime - SpawnTime > 300)
+                if (currentTime - SpawnTime > LifetimeMs)
                     IsComplete = true;
                 return;
             }
@@ -701,7 +703,15 @@ namespace HaCreator.MapSimulator.Effects
         /// <summary>
         /// Add a hit effect at a position
         /// </summary>
-        public void AddHitEffect(float x, float y, int currentTime, int variation = 0, bool flip = false, Color? tint = null)
+        public void AddHitEffect(
+            float x,
+            float y,
+            int currentTime,
+            int variation = 0,
+            bool flip = false,
+            Color? tint = null,
+            float scale = 1.0f,
+            int lifetimeMs = 300)
         {
             if (_hitEffects.Count >= MAX_HIT_EFFECTS)
             {
@@ -727,7 +737,9 @@ namespace HaCreator.MapSimulator.Effects
                 CurrentFrame = 0,
                 LastFrameTime = currentTime,
                 Flip = flip,
-                Tint = tint ?? Color.White
+                Tint = tint ?? Color.White,
+                Scale = Math.Clamp(scale, 0.25f, 3.00f),
+                LifetimeMs = Math.Clamp(lifetimeMs, 60, 2000)
             });
         }
 
@@ -1676,10 +1688,11 @@ namespace HaCreator.MapSimulator.Effects
                     {
                         int fallbackX = (int)effect.X - mapShiftX + centerX;
                         int fallbackY = (int)effect.Y - mapShiftY + centerY;
-                        
-                        // Center the 128x128 texture
-                        Rectangle destRect = new Rectangle(fallbackX - 64, fallbackY - 64, 128, 128);
-                        
+
+                        int fallbackSize = Math.Max(24, (int)Math.Round(128 * effect.Scale));
+                        int half = fallbackSize / 2;
+                        Rectangle destRect = new Rectangle(fallbackX - half, fallbackY - half, fallbackSize, fallbackSize);
+
                         spriteBatch.Draw(_glowTexture, destRect, effect.Tint);
                     }
                     continue;
@@ -1695,9 +1708,25 @@ namespace HaCreator.MapSimulator.Effects
                 // Add frame.X and frame.Y which contain the negative origin offset for proper alignment
                 int screenX = (int)effect.X - mapShiftX + centerX + frame.X;
                 int screenY = (int)effect.Y - mapShiftY + centerY + frame.Y;
-
-                // Use DrawBackground to support color tinting
-                frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY, effect.Tint, effect.Flip, null);
+                if (Math.Abs(effect.Scale - 1.0f) < 0.01f)
+                {
+                    frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY, effect.Tint, effect.Flip, null);
+                }
+                else
+                {
+                    // IDXObject has no scaled draw API. For AutoCap augmentation we emulate scale
+                    // by drawing additional offset layers around the base frame.
+                    frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY, effect.Tint, effect.Flip, null);
+                    if (effect.Scale > 1.0f)
+                    {
+                        int offset = Math.Max(1, (int)Math.Round((effect.Scale - 1.0f) * 10.0f));
+                        Color layerTint = effect.Tint * 0.55f;
+                        frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX - offset, screenY, layerTint, effect.Flip, null);
+                        frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX + offset, screenY, layerTint, effect.Flip, null);
+                        frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY - offset, layerTint, effect.Flip, null);
+                        frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY + offset, layerTint, effect.Flip, null);
+                    }
+                }
             }
         }
 

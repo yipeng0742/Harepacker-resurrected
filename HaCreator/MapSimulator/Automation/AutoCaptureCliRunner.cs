@@ -25,6 +25,7 @@ namespace HaCreator.MapSimulator.Automation
             public CaptureProfileMix capture_profile_mix { get; set; } = new CaptureProfileMix();
             public HpBarControl hp_bar_control { get; set; } = new HpBarControl();
             public DamageNumberControl damage_number_control { get; set; } = new DamageNumberControl();
+            public HitEffectControl hit_effect_control { get; set; } = new HitEffectControl();
             public int seed { get; set; } = 20260505;
             public int target_frames { get; set; } = 180;
             public bool mute_audio { get; set; } = true;
@@ -80,6 +81,24 @@ namespace HaCreator.MapSimulator.Automation
             public double attack { get; set; } = 0.14d;
             public double hit { get; set; } = 0.20d;
             public double death { get; set; } = 0.05d;
+        }
+
+        private sealed class HitEffectControl
+        {
+            public bool enabled { get; set; } = true;
+            public string palette_mode { get; set; } = "extended";
+            public double[] alpha_range { get; set; } = new[] { 0.45d, 0.90d };
+            public double[] scale_range { get; set; } = new[] { 0.70d, 1.50d };
+            public int[] lifetime_ms_range { get; set; } = new[] { 120, 360 };
+            public int[] extra_layers_range { get; set; } = new[] { 0, 2 };
+            public JitterPx jitter_px { get; set; } = new JitterPx();
+            public int[] variation_pool { get; set; } = new[] { 0, 1, 2, 3 };
+        }
+
+        private sealed class JitterPx
+        {
+            public int x { get; set; } = 48;
+            public int y { get; set; } = 28;
         }
 
         internal static bool IsAutoCaptureMode(string[] args)
@@ -162,10 +181,12 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"  profile_mix  : normal_move={job.capture_profile_mix?.normal_move ?? 30}, attack_heavy={job.capture_profile_mix?.attack_heavy ?? 30}, hit_occlusion_heavy={job.capture_profile_mix?.hit_occlusion_heavy ?? 25}, death_heavy={job.capture_profile_mix?.death_heavy ?? 15}");
                 AutoCaptureHpBarControl hpBarControl = BuildHpBarControl(job.hp_bar_control);
                 AutoCaptureDamageNumberControl damageControl = BuildDamageNumberControl(job.damage_number_control);
+                AutoCaptureHitEffectControl hitEffectControl = BuildHitEffectControl(job.hit_effect_control);
                 Console.WriteLine($"  hp_bar_ctrl  : global_cd={hpBarControl.HpEventGlobalCooldownMs}ms, per_mob_cd={hpBarControl.HpEventPerMobCooldownMs}ms, per_frame={hpBarControl.MaxHpEventsPerCaptureFrame}, active_mobs={hpBarControl.MaxHpActiveMobs}");
                 Console.WriteLine($"                 probs(normal/attack/hit/death)={hpBarControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
                 Console.WriteLine($"  dmg_num_ctrl : global_cd={damageControl.GlobalCooldownMs}ms, per_mob_cd={damageControl.PerMobCooldownMs}ms, per_frame={damageControl.MaxEventsPerCaptureFrame}, active_nums={damageControl.MaxActiveNumbers}, ratio_cap={damageControl.UseMobRatioCap}, mob_ratio={damageControl.MobRatio:0.###}, frame_cap={damageControl.MinEventsPerCaptureFrame}-{damageControl.MaxEventsPerCaptureFrameCap}");
                 Console.WriteLine($"                 probs(normal/attack/hit/death)={damageControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{damageControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
+                Console.WriteLine($"  hit_effect_ctrl: enabled={hitEffectControl.Enabled}, palette={hitEffectControl.PaletteMode}, alpha={hitEffectControl.AlphaMin:0.##}-{hitEffectControl.AlphaMax:0.##}, scale={hitEffectControl.ScaleMin:0.##}-{hitEffectControl.ScaleMax:0.##}, lifetime={hitEffectControl.LifetimeMsMin}-{hitEffectControl.LifetimeMsMax}ms, layers={hitEffectControl.ExtraLayersMin}-{hitEffectControl.ExtraLayersMax}, jitter={hitEffectControl.JitterPxX}x{hitEffectControl.JitterPxY}, variations=[{string.Join(",", hitEffectControl.VariationPool)}]");
                 if (!string.IsNullOrWhiteSpace(resumePath))
                 {
                     Console.WriteLine($"  resume       : {resumePath}");
@@ -234,7 +255,8 @@ namespace HaCreator.MapSimulator.Automation
                                 MuteAudio = job.mute_audio,
                                 CaptureProfileMix = BuildProfileMix(job.capture_profile_mix),
                                 HpBarControl = hpBarControl,
-                                DamageNumberControl = damageControl
+                                DamageNumberControl = damageControl,
+                                HitEffectControl = hitEffectControl
                             };
 
                             Console.WriteLine($"[AutoCap] 开始采集 map={mapId:D9} res={resolutionName}");
@@ -518,6 +540,43 @@ namespace HaCreator.MapSimulator.Automation
                     [AutoCaptureProfile.HitOcclusionHeavy] = Math.Clamp(prob.hit, 0d, 1d),
                     [AutoCaptureProfile.DeathHeavy] = Math.Clamp(prob.death, 0d, 1d)
                 }
+            }.Normalize();
+        }
+
+        private static AutoCaptureHitEffectControl BuildHitEffectControl(HitEffectControl control)
+        {
+            control ??= new HitEffectControl();
+            AutoCaptureHitEffectPaletteMode paletteMode =
+                string.Equals(control.palette_mode, "basic", StringComparison.OrdinalIgnoreCase)
+                    ? AutoCaptureHitEffectPaletteMode.Basic
+                    : AutoCaptureHitEffectPaletteMode.Extended;
+
+            double alphaMin = control.alpha_range != null && control.alpha_range.Length > 0 ? control.alpha_range[0] : 0.45d;
+            double alphaMax = control.alpha_range != null && control.alpha_range.Length > 1 ? control.alpha_range[1] : 0.90d;
+            double scaleMin = control.scale_range != null && control.scale_range.Length > 0 ? control.scale_range[0] : 0.70d;
+            double scaleMax = control.scale_range != null && control.scale_range.Length > 1 ? control.scale_range[1] : 1.50d;
+            int lifeMin = control.lifetime_ms_range != null && control.lifetime_ms_range.Length > 0 ? control.lifetime_ms_range[0] : 120;
+            int lifeMax = control.lifetime_ms_range != null && control.lifetime_ms_range.Length > 1 ? control.lifetime_ms_range[1] : 360;
+            int layerMin = control.extra_layers_range != null && control.extra_layers_range.Length > 0 ? control.extra_layers_range[0] : 0;
+            int layerMax = control.extra_layers_range != null && control.extra_layers_range.Length > 1 ? control.extra_layers_range[1] : 2;
+            int jitterX = control.jitter_px?.x ?? 48;
+            int jitterY = control.jitter_px?.y ?? 28;
+
+            return new AutoCaptureHitEffectControl
+            {
+                Enabled = control.enabled,
+                PaletteMode = paletteMode,
+                AlphaMin = alphaMin,
+                AlphaMax = alphaMax,
+                ScaleMin = scaleMin,
+                ScaleMax = scaleMax,
+                LifetimeMsMin = lifeMin,
+                LifetimeMsMax = lifeMax,
+                ExtraLayersMin = layerMin,
+                ExtraLayersMax = layerMax,
+                JitterPxX = jitterX,
+                JitterPxY = jitterY,
+                VariationPool = (control.variation_pool ?? new[] { 0, 1, 2, 3 }).ToList()
             }.Normalize();
         }
     }

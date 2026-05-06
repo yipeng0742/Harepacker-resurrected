@@ -29,6 +29,8 @@ namespace HaCreator.MapSimulator.Automation
             AutoCaptureHpBarControl.CreateDefault();
         public AutoCaptureDamageNumberControl DamageNumberControl { get; set; } =
             AutoCaptureDamageNumberControl.CreateDefault();
+        public AutoCaptureHitEffectControl HitEffectControl { get; set; } =
+            AutoCaptureHitEffectControl.CreateDefault();
 
         public static Dictionary<AutoCaptureProfile, int> CreateDefaultProfileMix()
         {
@@ -71,6 +73,11 @@ namespace HaCreator.MapSimulator.Automation
         public AutoCaptureDamageNumberControl GetNormalizedDamageNumberControl()
         {
             return (DamageNumberControl ?? AutoCaptureDamageNumberControl.CreateDefault()).Normalize();
+        }
+
+        public AutoCaptureHitEffectControl GetNormalizedHitEffectControl()
+        {
+            return (HitEffectControl ?? AutoCaptureHitEffectControl.CreateDefault()).Normalize();
         }
     }
 
@@ -199,6 +206,88 @@ namespace HaCreator.MapSimulator.Automation
                 value = CreateDefaultProbabilities()[profile];
             }
             return Math.Clamp(value, 0d, 1d);
+        }
+    }
+
+    internal enum AutoCaptureHitEffectPaletteMode
+    {
+        Basic,
+        Extended
+    }
+
+    internal sealed class AutoCaptureHitEffectControl
+    {
+        public bool Enabled { get; set; } = true;
+        public AutoCaptureHitEffectPaletteMode PaletteMode { get; set; } = AutoCaptureHitEffectPaletteMode.Extended;
+        public double AlphaMin { get; set; } = 0.45d;
+        public double AlphaMax { get; set; } = 0.90d;
+        public double ScaleMin { get; set; } = 0.70d;
+        public double ScaleMax { get; set; } = 1.50d;
+        public int LifetimeMsMin { get; set; } = 120;
+        public int LifetimeMsMax { get; set; } = 360;
+        public int ExtraLayersMin { get; set; } = 0;
+        public int ExtraLayersMax { get; set; } = 2;
+        public int JitterPxX { get; set; } = 48;
+        public int JitterPxY { get; set; } = 28;
+        public List<int> VariationPool { get; set; } = new List<int> { 0, 1, 2, 3 };
+
+        public static AutoCaptureHitEffectControl CreateDefault()
+        {
+            return new AutoCaptureHitEffectControl();
+        }
+
+        public AutoCaptureHitEffectControl Normalize()
+        {
+            var normalized = new AutoCaptureHitEffectControl
+            {
+                Enabled = Enabled,
+                PaletteMode = PaletteMode,
+                AlphaMin = Math.Clamp(AlphaMin, 0.05d, 1.00d),
+                AlphaMax = Math.Clamp(AlphaMax, 0.05d, 1.00d),
+                ScaleMin = Math.Clamp(ScaleMin, 0.30d, 2.50d),
+                ScaleMax = Math.Clamp(ScaleMax, 0.30d, 2.50d),
+                LifetimeMsMin = Math.Clamp(LifetimeMsMin, 60, 2000),
+                LifetimeMsMax = Math.Clamp(LifetimeMsMax, 60, 2000),
+                ExtraLayersMin = Math.Clamp(ExtraLayersMin, 0, 6),
+                ExtraLayersMax = Math.Clamp(ExtraLayersMax, 0, 6),
+                JitterPxX = Math.Clamp(JitterPxX, 0, 300),
+                JitterPxY = Math.Clamp(JitterPxY, 0, 300),
+                VariationPool = new List<int>()
+            };
+
+            if (normalized.AlphaMin > normalized.AlphaMax)
+            {
+                (normalized.AlphaMin, normalized.AlphaMax) = (normalized.AlphaMax, normalized.AlphaMin);
+            }
+            if (normalized.ScaleMin > normalized.ScaleMax)
+            {
+                (normalized.ScaleMin, normalized.ScaleMax) = (normalized.ScaleMax, normalized.ScaleMin);
+            }
+            if (normalized.LifetimeMsMin > normalized.LifetimeMsMax)
+            {
+                (normalized.LifetimeMsMin, normalized.LifetimeMsMax) = (normalized.LifetimeMsMax, normalized.LifetimeMsMin);
+            }
+            if (normalized.ExtraLayersMin > normalized.ExtraLayersMax)
+            {
+                (normalized.ExtraLayersMin, normalized.ExtraLayersMax) = (normalized.ExtraLayersMax, normalized.ExtraLayersMin);
+            }
+
+            if (VariationPool != null)
+            {
+                foreach (int v in VariationPool)
+                {
+                    if (v >= 0 && v <= 16)
+                    {
+                        normalized.VariationPool.Add(v);
+                    }
+                }
+            }
+            if (normalized.VariationPool.Count == 0)
+            {
+                normalized.VariationPool.AddRange(new[] { 0, 1, 2, 3 });
+            }
+            normalized.VariationPool = normalized.VariationPool.Distinct().ToList();
+            return normalized;
         }
     }
 

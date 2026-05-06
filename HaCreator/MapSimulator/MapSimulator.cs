@@ -214,6 +214,7 @@ namespace HaCreator.MapSimulator
         private Dictionary<AutoCaptureProfile, int> _autoCaptureProfileMix = AutoCaptureRunOptions.CreateDefaultProfileMix();
         private AutoCaptureHpBarControl _autoCaptureHpBarControl = AutoCaptureHpBarControl.CreateDefault();
         private AutoCaptureDamageNumberControl _autoCaptureDamageNumberControl = AutoCaptureDamageNumberControl.CreateDefault();
+        private AutoCaptureHitEffectControl _autoCaptureHitEffectControl = AutoCaptureHitEffectControl.CreateDefault();
         private int _autoCaptureLastProfileLogFrame = -1;
         private int _autoCaptureCameraTickBudget = 0;
         private int _autoCaptureCameraTickBudgetCounter = 0;
@@ -244,7 +245,7 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureDmgSegmentsEmittedSnapshot = 0;
         private const int HpBarPairingRadiusPx = 120;
         private const int AutoCapViewSafeMarginPx = 80;
-        private static readonly Color[] AutoCapHitEffectTintPalette = new[]
+        private static readonly Color[] AutoCapHitEffectTintPaletteBasic = new[]
         {
             new Color(255, 255, 255), // white
             new Color(255, 210, 120), // warm gold
@@ -252,6 +253,19 @@ namespace HaCreator.MapSimulator
             new Color(255, 170, 245), // pink purple
             new Color(170, 255, 170), // lime green
             new Color(255, 150, 150)  // soft red
+        };
+        private static readonly Color[] AutoCapHitEffectTintPaletteExtended = new[]
+        {
+            new Color(255, 255, 255),
+            new Color(255, 220, 120),
+            new Color(255, 170, 110),
+            new Color(255, 120, 170),
+            new Color(245, 165, 255),
+            new Color(180, 145, 255),
+            new Color(140, 220, 255),
+            new Color(110, 255, 240),
+            new Color(135, 255, 170),
+            new Color(220, 255, 145)
         };
 
         // Map state cache for maintaining entity positions across map transitions
@@ -350,6 +364,7 @@ namespace HaCreator.MapSimulator
             _autoCaptureProfileMix = _autoCaptureOptions.GetNormalizedProfileMix();
             _autoCaptureHpBarControl = _autoCaptureOptions.GetNormalizedHpBarControl();
             _autoCaptureDamageNumberControl = _autoCaptureOptions.GetNormalizedDamageNumberControl();
+            _autoCaptureHitEffectControl = _autoCaptureOptions.GetNormalizedHitEffectControl();
             int runtimeSeed = _autoCaptureOptions.Seed ^ _autoCaptureOptions.MapId ^ (_autoCaptureOptions.ResolutionName?.GetHashCode() ?? 0);
             _autoCaptureRandom = new Random(runtimeSeed);
             _autoCaptureCurrentProfile = SelectProfileByWeight(_autoCaptureRandom, _autoCaptureProfileMix);
@@ -390,6 +405,8 @@ namespace HaCreator.MapSimulator
                 $"[AutoCap] hp_bar_ctrl global_cd={_autoCaptureHpBarControl.HpEventGlobalCooldownMs}ms per_mob_cd={_autoCaptureHpBarControl.HpEventPerMobCooldownMs}ms per_capture_frame={_autoCaptureHpBarControl.MaxHpEventsPerCaptureFrame} max_active_mobs={_autoCaptureHpBarControl.MaxHpActiveMobs}");
             System.Console.WriteLine(
                 $"[AutoCap] dmg_num_ctrl global_cd={_autoCaptureDamageNumberControl.GlobalCooldownMs}ms per_mob_cd={_autoCaptureDamageNumberControl.PerMobCooldownMs}ms per_capture_frame={_autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame} max_active_numbers={_autoCaptureDamageNumberControl.MaxActiveNumbers}");
+            System.Console.WriteLine(
+                $"[AutoCap] hit_effect_ctrl enabled={_autoCaptureHitEffectControl.Enabled} palette={_autoCaptureHitEffectControl.PaletteMode} alpha={_autoCaptureHitEffectControl.AlphaMin:0.##}-{_autoCaptureHitEffectControl.AlphaMax:0.##} scale={_autoCaptureHitEffectControl.ScaleMin:0.##}-{_autoCaptureHitEffectControl.ScaleMax:0.##} lifetime={_autoCaptureHitEffectControl.LifetimeMsMin}-{_autoCaptureHitEffectControl.LifetimeMsMax}ms layers={_autoCaptureHitEffectControl.ExtraLayersMin}-{_autoCaptureHitEffectControl.ExtraLayersMax} jitter={_autoCaptureHitEffectControl.JitterPxX}x{_autoCaptureHitEffectControl.JitterPxY} variations=[{string.Join(",", _autoCaptureHitEffectControl.VariationPool)}]");
         }
 
         private void BuildAutoCaptureScanPath()
@@ -783,29 +800,47 @@ namespace HaCreator.MapSimulator
                     float xOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 42);
                     float yOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 20);
                     int eventTick = tick + (burst * 14);
-                    Color hitTint = AutoCapHitEffectTintPalette[_autoCaptureRandom.Next(AutoCapHitEffectTintPalette.Length)];
-                    combat.AddHitEffect(
-                        mob.CurrentX + xOffset,
-                        mob.CurrentY - 24 + yOffset,
-                        eventTick,
-                        _autoCaptureRandom.Next(0, 4),
-                        _autoCaptureRandom.NextDouble() > 0.5,
-                        hitTint);
-
-                    if (_autoCaptureCurrentProfile == AutoCaptureProfile.HitOcclusionHeavy)
+                    if (_autoCaptureHitEffectControl?.Enabled != false)
                     {
-                        int extraEffects = _autoCaptureRandom.Next(0, 2);
+                        Color baseTint = PickAutoCaptureHitEffectTint();
+                        double alpha = PickAutoCaptureAlpha(_autoCaptureCurrentProfile);
+                        Color hitTint = baseTint * (float)alpha;
+                        float hitScale = PickAutoCaptureScale(_autoCaptureCurrentProfile);
+                        int hitLifetimeMs = PickAutoCaptureLifetimeMs(_autoCaptureCurrentProfile);
+                        int hitVariation = PickAutoCaptureHitVariation();
+                        int jitterXRange = Math.Max(0, _autoCaptureHitEffectControl?.JitterPxX ?? 48);
+                        int jitterYRange = Math.Max(0, _autoCaptureHitEffectControl?.JitterPxY ?? 28);
+
+                        combat.AddHitEffect(
+                            mob.CurrentX + xOffset,
+                            mob.CurrentY - 24 + yOffset,
+                            eventTick,
+                            hitVariation,
+                            _autoCaptureRandom.NextDouble() > 0.5,
+                            hitTint,
+                            hitScale,
+                            hitLifetimeMs);
+
+                        int extraEffects = _autoCaptureCurrentProfile == AutoCaptureProfile.HitOcclusionHeavy
+                            ? Math.Max(1, PickAutoCaptureExtraLayers())
+                            : PickAutoCaptureExtraLayers();
                         for (int i = 0; i < extraEffects; i++)
                         {
-                            float fx = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 60);
-                            float fy = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 40);
+                            float fx = jitterXRange == 0 ? 0f : (float)((_autoCaptureRandom.NextDouble() - 0.5) * (jitterXRange * 2));
+                            float fy = jitterYRange == 0 ? 0f : (float)((_autoCaptureRandom.NextDouble() - 0.5) * (jitterYRange * 2));
+                            int layerTick = eventTick + _autoCaptureRandom.Next(0, 24);
+                            float layerScale = hitScale * (float)(0.90d + (_autoCaptureRandom.NextDouble() * 0.30d));
+                            int layerLife = Math.Clamp((int)(hitLifetimeMs * (0.85d + (_autoCaptureRandom.NextDouble() * 0.35d))), 60, 2000);
+                            Color layerTint = baseTint * (float)Math.Clamp(alpha * (0.75d + (_autoCaptureRandom.NextDouble() * 0.35d)), 0.05d, 1.0d);
                             combat.AddHitEffect(
                                 mob.CurrentX + xOffset + fx,
                                 mob.CurrentY - 24 + yOffset + fy,
-                                eventTick,
-                                _autoCaptureRandom.Next(0, 4),
+                                layerTick,
+                                PickAutoCaptureHitVariation(),
                                 _autoCaptureRandom.NextDouble() > 0.5,
-                                hitTint);
+                                layerTint,
+                                layerScale,
+                                layerLife);
                         }
                     }
 
@@ -878,6 +913,110 @@ namespace HaCreator.MapSimulator
             if (value < min) return min;
             if (value > max) return max;
             return value;
+        }
+
+        private Color PickAutoCaptureHitEffectTint()
+        {
+            var palette = _autoCaptureHitEffectControl?.PaletteMode == AutoCaptureHitEffectPaletteMode.Extended
+                ? AutoCapHitEffectTintPaletteExtended
+                : AutoCapHitEffectTintPaletteBasic;
+            if (_autoCaptureRandom == null || palette == null || palette.Length == 0)
+            {
+                return Color.White;
+            }
+            return palette[_autoCaptureRandom.Next(palette.Length)];
+        }
+
+        private int PickAutoCaptureHitVariation()
+        {
+            if (_autoCaptureRandom == null)
+            {
+                return 0;
+            }
+            var pool = _autoCaptureHitEffectControl?.VariationPool;
+            if (pool == null || pool.Count == 0)
+            {
+                return _autoCaptureRandom.Next(0, 4);
+            }
+            return pool[_autoCaptureRandom.Next(pool.Count)];
+        }
+
+        private int PickAutoCaptureExtraLayers()
+        {
+            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
+            {
+                return 0;
+            }
+            int min = _autoCaptureHitEffectControl.ExtraLayersMin;
+            int max = _autoCaptureHitEffectControl.ExtraLayersMax;
+            if (max <= min)
+            {
+                return Math.Max(0, min);
+            }
+            return _autoCaptureRandom.Next(min, max + 1);
+        }
+
+        private double PickAutoCaptureAlpha(AutoCaptureProfile profile)
+        {
+            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
+            {
+                return 0.70d;
+            }
+
+            double min = _autoCaptureHitEffectControl.AlphaMin;
+            double max = _autoCaptureHitEffectControl.AlphaMax;
+            if (profile == AutoCaptureProfile.HitOcclusionHeavy)
+            {
+                min = Math.Min(1.0d, min + 0.08d);
+                max = Math.Min(1.0d, max + 0.06d);
+            }
+            return min + ((max - min) * _autoCaptureRandom.NextDouble());
+        }
+
+        private float PickAutoCaptureScale(AutoCaptureProfile profile)
+        {
+            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
+            {
+                return 1.0f;
+            }
+
+            double min = _autoCaptureHitEffectControl.ScaleMin;
+            double max = _autoCaptureHitEffectControl.ScaleMax;
+            if (profile == AutoCaptureProfile.HitOcclusionHeavy)
+            {
+                min += 0.10d;
+                max += 0.20d;
+            }
+            min = Math.Clamp(min, 0.3d, 2.5d);
+            max = Math.Clamp(max, 0.3d, 2.5d);
+            if (max < min)
+            {
+                (min, max) = (max, min);
+            }
+            return (float)(min + ((max - min) * _autoCaptureRandom.NextDouble()));
+        }
+
+        private int PickAutoCaptureLifetimeMs(AutoCaptureProfile profile)
+        {
+            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
+            {
+                return 220;
+            }
+
+            int min = _autoCaptureHitEffectControl.LifetimeMsMin;
+            int max = _autoCaptureHitEffectControl.LifetimeMsMax;
+            if (profile == AutoCaptureProfile.HitOcclusionHeavy)
+            {
+                min += 20;
+                max += 60;
+            }
+            min = Math.Clamp(min, 60, 2000);
+            max = Math.Clamp(max, 60, 2000);
+            if (max <= min)
+            {
+                return min;
+            }
+            return _autoCaptureRandom.Next(min, max + 1);
         }
 
         private void TryTriggerAutoCaptureHpBars(CombatEffects combat, int tick, List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)
