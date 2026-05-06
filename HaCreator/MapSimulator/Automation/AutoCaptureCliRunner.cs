@@ -23,6 +23,8 @@ namespace HaCreator.MapSimulator.Automation
             public string[] resolutions { get; set; }
             public ScanStep scan_step_px { get; set; } = new ScanStep();
             public CaptureProfileMix capture_profile_mix { get; set; } = new CaptureProfileMix();
+            public HpBarControl hp_bar_control { get; set; } = new HpBarControl();
+            public DamageNumberControl damage_number_control { get; set; } = new DamageNumberControl();
             public int seed { get; set; } = 20260505;
             public int target_frames { get; set; } = 180;
             public bool mute_audio { get; set; } = true;
@@ -40,6 +42,44 @@ namespace HaCreator.MapSimulator.Automation
             public int attack_heavy { get; set; } = 30;
             public int hit_occlusion_heavy { get; set; } = 25;
             public int death_heavy { get; set; } = 15;
+        }
+
+        private sealed class HpBarControl
+        {
+            public int hp_event_global_cooldown_ms { get; set; } = 180;
+            public int hp_event_per_mob_cooldown_ms { get; set; } = 650;
+            public int max_hp_events_per_capture_frame { get; set; } = 6;
+            public int max_hp_active_mobs { get; set; } = 6;
+            public HpEventProbByProfile hp_event_prob_by_profile { get; set; } = new HpEventProbByProfile();
+        }
+
+        private sealed class HpEventProbByProfile
+        {
+            public double normal { get; set; } = 0.10d;
+            public double attack { get; set; } = 0.18d;
+            public double hit { get; set; } = 0.28d;
+            public double death { get; set; } = 0.06d;
+        }
+
+        private sealed class DamageNumberControl
+        {
+            public bool use_mob_ratio_cap { get; set; } = true;
+            public double mob_ratio { get; set; } = 0.30d;
+            public int min_events_per_capture_frame { get; set; } = 1;
+            public int max_events_per_capture_frame_cap { get; set; } = 6;
+            public int global_cooldown_ms { get; set; } = 220;
+            public int per_mob_cooldown_ms { get; set; } = 900;
+            public int max_events_per_capture_frame { get; set; } = 6;
+            public int max_active_numbers { get; set; } = 36;
+            public DamageProbByProfile prob_by_profile { get; set; } = new DamageProbByProfile();
+        }
+
+        private sealed class DamageProbByProfile
+        {
+            public double normal { get; set; } = 0.08d;
+            public double attack { get; set; } = 0.14d;
+            public double hit { get; set; } = 0.20d;
+            public double death { get; set; } = 0.05d;
         }
 
         internal static bool IsAutoCaptureMode(string[] args)
@@ -120,6 +160,12 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"  seed         : {job.seed}");
                 Console.WriteLine($"  mute_audio   : {job.mute_audio}");
                 Console.WriteLine($"  profile_mix  : normal_move={job.capture_profile_mix?.normal_move ?? 30}, attack_heavy={job.capture_profile_mix?.attack_heavy ?? 30}, hit_occlusion_heavy={job.capture_profile_mix?.hit_occlusion_heavy ?? 25}, death_heavy={job.capture_profile_mix?.death_heavy ?? 15}");
+                AutoCaptureHpBarControl hpBarControl = BuildHpBarControl(job.hp_bar_control);
+                AutoCaptureDamageNumberControl damageControl = BuildDamageNumberControl(job.damage_number_control);
+                Console.WriteLine($"  hp_bar_ctrl  : global_cd={hpBarControl.HpEventGlobalCooldownMs}ms, per_mob_cd={hpBarControl.HpEventPerMobCooldownMs}ms, per_frame={hpBarControl.MaxHpEventsPerCaptureFrame}, active_mobs={hpBarControl.MaxHpActiveMobs}");
+                Console.WriteLine($"                 probs(normal/attack/hit/death)={hpBarControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
+                Console.WriteLine($"  dmg_num_ctrl : global_cd={damageControl.GlobalCooldownMs}ms, per_mob_cd={damageControl.PerMobCooldownMs}ms, per_frame={damageControl.MaxEventsPerCaptureFrame}, active_nums={damageControl.MaxActiveNumbers}, ratio_cap={damageControl.UseMobRatioCap}, mob_ratio={damageControl.MobRatio:0.###}, frame_cap={damageControl.MinEventsPerCaptureFrame}-{damageControl.MaxEventsPerCaptureFrameCap}");
+                Console.WriteLine($"                 probs(normal/attack/hit/death)={damageControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{damageControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
                 if (!string.IsNullOrWhiteSpace(resumePath))
                 {
                     Console.WriteLine($"  resume       : {resumePath}");
@@ -186,7 +232,9 @@ namespace HaCreator.MapSimulator.Automation
                                 TimeScale = Math.Max(1f, job.time_scale),
                                 Seed = job.seed,
                                 MuteAudio = job.mute_audio,
-                                CaptureProfileMix = BuildProfileMix(job.capture_profile_mix)
+                                CaptureProfileMix = BuildProfileMix(job.capture_profile_mix),
+                                HpBarControl = hpBarControl,
+                                DamageNumberControl = damageControl
                             };
 
                             Console.WriteLine($"[AutoCap] 开始采集 map={mapId:D9} res={resolutionName}");
@@ -425,6 +473,52 @@ namespace HaCreator.MapSimulator.Automation
             }
 
             return result;
+        }
+
+        private static AutoCaptureHpBarControl BuildHpBarControl(HpBarControl control)
+        {
+            control ??= new HpBarControl();
+            var prob = control.hp_event_prob_by_profile ?? new HpEventProbByProfile();
+
+            return new AutoCaptureHpBarControl
+            {
+                HpEventGlobalCooldownMs = Math.Max(0, control.hp_event_global_cooldown_ms),
+                HpEventPerMobCooldownMs = Math.Max(0, control.hp_event_per_mob_cooldown_ms),
+                MaxHpEventsPerCaptureFrame = Math.Max(0, control.max_hp_events_per_capture_frame),
+                MaxHpActiveMobs = Math.Max(1, control.max_hp_active_mobs),
+                HpEventProbByProfile = new Dictionary<AutoCaptureProfile, double>
+                {
+                    [AutoCaptureProfile.NormalMove] = Math.Clamp(prob.normal, 0d, 1d),
+                    [AutoCaptureProfile.AttackHeavy] = Math.Clamp(prob.attack, 0d, 1d),
+                    [AutoCaptureProfile.HitOcclusionHeavy] = Math.Clamp(prob.hit, 0d, 1d),
+                    [AutoCaptureProfile.DeathHeavy] = Math.Clamp(prob.death, 0d, 1d)
+                }
+            }.Normalize();
+        }
+
+        private static AutoCaptureDamageNumberControl BuildDamageNumberControl(DamageNumberControl control)
+        {
+            control ??= new DamageNumberControl();
+            var prob = control.prob_by_profile ?? new DamageProbByProfile();
+
+            return new AutoCaptureDamageNumberControl
+            {
+                UseMobRatioCap = control.use_mob_ratio_cap,
+                MobRatio = Math.Clamp(control.mob_ratio, 0d, 1d),
+                MinEventsPerCaptureFrame = Math.Max(0, control.min_events_per_capture_frame),
+                MaxEventsPerCaptureFrameCap = Math.Max(1, control.max_events_per_capture_frame_cap),
+                GlobalCooldownMs = Math.Max(0, control.global_cooldown_ms),
+                PerMobCooldownMs = Math.Max(0, control.per_mob_cooldown_ms),
+                MaxEventsPerCaptureFrame = Math.Max(0, control.max_events_per_capture_frame),
+                MaxActiveNumbers = Math.Max(1, control.max_active_numbers),
+                ProbByProfile = new Dictionary<AutoCaptureProfile, double>
+                {
+                    [AutoCaptureProfile.NormalMove] = Math.Clamp(prob.normal, 0d, 1d),
+                    [AutoCaptureProfile.AttackHeavy] = Math.Clamp(prob.attack, 0d, 1d),
+                    [AutoCaptureProfile.HitOcclusionHeavy] = Math.Clamp(prob.hit, 0d, 1d),
+                    [AutoCaptureProfile.DeathHeavy] = Math.Clamp(prob.death, 0d, 1d)
+                }
+            }.Normalize();
         }
     }
 }

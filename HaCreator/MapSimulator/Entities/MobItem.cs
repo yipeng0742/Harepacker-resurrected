@@ -790,7 +790,8 @@ namespace HaCreator.MapSimulator.Entities
         /// </summary>
         public Rectangle? GetScreenBounds(int mapShiftX, int mapShiftY, int centerX, int centerY, float scale)
         {
-            IDXObject frame = GetCurrentAnimationFrame(0);
+            int tick = Environment.TickCount;
+            IDXObject frame = GetCurrentAnimationFrame(tick);
             if (frame == null) return null;
 
             int positionOffsetX = 0;

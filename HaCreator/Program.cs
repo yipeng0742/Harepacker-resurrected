@@ -12,6 +12,7 @@ using System.Globalization;
 using System.Threading;
 using System.Resources;
 using System.Reflection;
+using System.Text;
 using HaCreator.Wz;
 using HaSharedLibrary;
 using MapleLib;
@@ -183,6 +184,16 @@ namespace HaCreator
         [STAThread]
         static void Main(string[] args)
         {
+            try
+            {
+                Console.InputEncoding = Encoding.UTF8;
+                Console.OutputEncoding = Encoding.UTF8;
+            }
+            catch
+            {
+                // 某些宿主环境可能不允许切换编码，忽略并继续。
+            }
+
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
             // Startup

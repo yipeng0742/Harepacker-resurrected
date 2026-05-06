@@ -212,7 +212,47 @@ namespace HaCreator.MapSimulator
         private AutoCaptureProfile _autoCaptureCurrentProfile = AutoCaptureProfile.NormalMove;
         private int _autoCaptureProfileSwitchTick = 0;
         private Dictionary<AutoCaptureProfile, int> _autoCaptureProfileMix = AutoCaptureRunOptions.CreateDefaultProfileMix();
+        private AutoCaptureHpBarControl _autoCaptureHpBarControl = AutoCaptureHpBarControl.CreateDefault();
+        private AutoCaptureDamageNumberControl _autoCaptureDamageNumberControl = AutoCaptureDamageNumberControl.CreateDefault();
         private int _autoCaptureLastProfileLogFrame = -1;
+        private int _autoCaptureCameraTickBudget = 0;
+        private int _autoCaptureCameraTickBudgetCounter = 0;
+        private readonly Dictionary<int, int> _autoCaptureHpLastTickByMob = new Dictionary<int, int>();
+        private readonly Dictionary<int, int> _autoCaptureDmgLastTickByMob = new Dictionary<int, int>();
+        private int _autoCaptureHpLastGlobalTick = int.MinValue / 2;
+        private int _autoCaptureDmgLastGlobalTick = int.MinValue / 2;
+        private int _autoCaptureHpFrameMarker = -1;
+        private int _autoCaptureDmgFrameMarker = -1;
+        private int _autoCaptureHpEventsUsedOnCaptureFrame = 0;
+        private int _autoCaptureDmgEventsUsedOnCaptureFrame = 0;
+        private int _autoCaptureHpAttempted = 0;
+        private int _autoCaptureHpFired = 0;
+        private int _autoCaptureHpSkippedCooldown = 0;
+        private int _autoCaptureDmgAttempted = 0;
+        private int _autoCaptureDmgFired = 0;
+        private int _autoCaptureDmgSkippedCooldown = 0;
+        private int _autoCaptureDmgSegmentsEmitted = 0;
+        private int _autoCaptureDmgMobsHit = 0;
+        private int _autoCaptureDmgMobsHitCurrentFrame = 0;
+        private int _autoCaptureDmgMobsHitPeakSinceLastLog = 0;
+        private int _autoCaptureHpAttemptedSnapshot = 0;
+        private int _autoCaptureHpFiredSnapshot = 0;
+        private int _autoCaptureHpSkippedCooldownSnapshot = 0;
+        private int _autoCaptureDmgAttemptedSnapshot = 0;
+        private int _autoCaptureDmgFiredSnapshot = 0;
+        private int _autoCaptureDmgSkippedCooldownSnapshot = 0;
+        private int _autoCaptureDmgSegmentsEmittedSnapshot = 0;
+        private const int HpBarPairingRadiusPx = 120;
+        private const int AutoCapViewSafeMarginPx = 80;
+        private static readonly Color[] AutoCapHitEffectTintPalette = new[]
+        {
+            new Color(255, 255, 255), // white
+            new Color(255, 210, 120), // warm gold
+            new Color(140, 235, 255), // cyan blue
+            new Color(255, 170, 245), // pink purple
+            new Color(170, 255, 170), // lime green
+            new Color(255, 150, 150)  // soft red
+        };
 
         // Map state cache for maintaining entity positions across map transitions
         private readonly MapStateCache _mapStateCache = new MapStateCache();
@@ -308,20 +348,55 @@ namespace HaCreator.MapSimulator
 
             _autoCaptureFrameBudget = Math.Max(1, _autoCaptureOptions.TargetFrames);
             _autoCaptureProfileMix = _autoCaptureOptions.GetNormalizedProfileMix();
+            _autoCaptureHpBarControl = _autoCaptureOptions.GetNormalizedHpBarControl();
+            _autoCaptureDamageNumberControl = _autoCaptureOptions.GetNormalizedDamageNumberControl();
             int runtimeSeed = _autoCaptureOptions.Seed ^ _autoCaptureOptions.MapId ^ (_autoCaptureOptions.ResolutionName?.GetHashCode() ?? 0);
             _autoCaptureRandom = new Random(runtimeSeed);
             _autoCaptureCurrentProfile = SelectProfileByWeight(_autoCaptureRandom, _autoCaptureProfileMix);
             _autoCaptureProfileSwitchTick = Environment.TickCount;
+            _autoCaptureHpLastTickByMob.Clear();
+            _autoCaptureDmgLastTickByMob.Clear();
+            _autoCaptureHpLastGlobalTick = int.MinValue / 2;
+            _autoCaptureDmgLastGlobalTick = int.MinValue / 2;
+            _autoCaptureHpFrameMarker = -1;
+            _autoCaptureDmgFrameMarker = -1;
+            _autoCaptureHpEventsUsedOnCaptureFrame = 0;
+            _autoCaptureDmgEventsUsedOnCaptureFrame = 0;
+            _autoCaptureHpAttempted = 0;
+            _autoCaptureHpFired = 0;
+            _autoCaptureHpSkippedCooldown = 0;
+            _autoCaptureDmgAttempted = 0;
+            _autoCaptureDmgFired = 0;
+            _autoCaptureDmgSkippedCooldown = 0;
+            _autoCaptureDmgSegmentsEmitted = 0;
+            _autoCaptureDmgMobsHit = 0;
+            _autoCaptureDmgMobsHitCurrentFrame = 0;
+            _autoCaptureDmgMobsHitPeakSinceLastLog = 0;
+            _autoCaptureHpAttemptedSnapshot = 0;
+            _autoCaptureHpFiredSnapshot = 0;
+            _autoCaptureHpSkippedCooldownSnapshot = 0;
+            _autoCaptureDmgAttemptedSnapshot = 0;
+            _autoCaptureDmgFiredSnapshot = 0;
+            _autoCaptureDmgSkippedCooldownSnapshot = 0;
+            _autoCaptureDmgSegmentsEmittedSnapshot = 0;
             BuildAutoCaptureScanPath();
             _autoCaptureStarted = true;
 
             System.Console.WriteLine(
                 $"[AutoCap] map={_autoCaptureOptions.MapId:D9} res={_autoCaptureOptions.ResolutionName} targetFrames={_autoCaptureFrameBudget} scanPoints={_autoCaptureScanPath?.Count ?? 0} seed={runtimeSeed}");
+            System.Console.WriteLine(
+                $"[AutoCap] camera_scan tick_budget={Math.Max(1, _autoCaptureCameraTickBudget)}");
+            System.Console.WriteLine(
+                $"[AutoCap] hp_bar_ctrl global_cd={_autoCaptureHpBarControl.HpEventGlobalCooldownMs}ms per_mob_cd={_autoCaptureHpBarControl.HpEventPerMobCooldownMs}ms per_capture_frame={_autoCaptureHpBarControl.MaxHpEventsPerCaptureFrame} max_active_mobs={_autoCaptureHpBarControl.MaxHpActiveMobs}");
+            System.Console.WriteLine(
+                $"[AutoCap] dmg_num_ctrl global_cd={_autoCaptureDamageNumberControl.GlobalCooldownMs}ms per_mob_cd={_autoCaptureDamageNumberControl.PerMobCooldownMs}ms per_capture_frame={_autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame} max_active_numbers={_autoCaptureDamageNumberControl.MaxActiveNumbers}");
         }
 
         private void BuildAutoCaptureScanPath()
         {
             _autoCaptureScanPath = new List<Point>();
+            _autoCaptureCameraTickBudget = 0;
+            _autoCaptureCameraTickBudgetCounter = 0;
 
             int minX = (int)(_vrFieldBoundary.Left * _renderParams.RenderObjectScaling);
             int maxX = (int)(_vrFieldBoundary.Right - (_renderParams.RenderWidth / _renderParams.RenderObjectScaling));
@@ -340,6 +415,34 @@ namespace HaCreator.MapSimulator
             {
                 int centerY = ((int)(_vrFieldBoundary.Top + _vrFieldBoundary.Bottom) / 2) - (_renderParams.RenderHeight / 2);
                 minY = maxY = centerY;
+            }
+
+            int spanX = Math.Max(0, maxX - minX);
+            int spanY = Math.Max(0, maxY - minY);
+            int areaSpan = spanX + spanY;
+            int baseSpan = Math.Max(1, stepX + stepY);
+            if (areaSpan <= baseSpan)
+            {
+                int centerX = (minX + maxX) / 2;
+                int centerY = (minY + maxY) / 2;
+                _autoCaptureScanPath.Add(new Point(centerX, centerY));
+                _autoCaptureCameraTickBudget = 10;
+                return;
+            }
+
+            if (areaSpan <= baseSpan * 2)
+            {
+                stepX = Math.Max(stepX, baseSpan / 2);
+                stepY = Math.Max(stepY, baseSpan / 2);
+                _autoCaptureCameraTickBudget = 6;
+            }
+            else if (areaSpan <= baseSpan * 4)
+            {
+                _autoCaptureCameraTickBudget = 4;
+            }
+            else
+            {
+                _autoCaptureCameraTickBudget = 2;
             }
 
             int row = 0;
@@ -372,6 +475,16 @@ namespace HaCreator.MapSimulator
         {
             if (!IsAutoCaptureEnabled || !_autoCaptureStarted || _autoCaptureScanPath == null || _autoCaptureScanPath.Count == 0)
                 return;
+
+            if (_autoCaptureCameraTickBudget > 1)
+            {
+                _autoCaptureCameraTickBudgetCounter++;
+                if (_autoCaptureCameraTickBudgetCounter < _autoCaptureCameraTickBudget)
+                {
+                    return;
+                }
+                _autoCaptureCameraTickBudgetCounter = 0;
+            }
 
             Point p = _autoCaptureScanPath[_autoCaptureScanIndex % _autoCaptureScanPath.Count];
             mapShiftX = p.X;
@@ -432,9 +545,28 @@ namespace HaCreator.MapSimulator
             if (capturedFrames > 0 && capturedFrames % 30 == 0 && capturedFrames != _autoCaptureLastProfileLogFrame)
             {
                 _autoCaptureLastProfileLogFrame = capturedFrames;
-                System.Console.WriteLine($"[AutoCap][Profile] frame={capturedFrames} profile={_autoCaptureCurrentProfile}");
+                int hpAttemptedDelta = _autoCaptureHpAttempted - _autoCaptureHpAttemptedSnapshot;
+                int hpFiredDelta = _autoCaptureHpFired - _autoCaptureHpFiredSnapshot;
+                int hpSkippedDelta = _autoCaptureHpSkippedCooldown - _autoCaptureHpSkippedCooldownSnapshot;
+                int dmgAttemptedDelta = _autoCaptureDmgAttempted - _autoCaptureDmgAttemptedSnapshot;
+                int dmgFiredDelta = _autoCaptureDmgFired - _autoCaptureDmgFiredSnapshot;
+                int dmgSkippedDelta = _autoCaptureDmgSkippedCooldown - _autoCaptureDmgSkippedCooldownSnapshot;
+                int dmgSegmentsDelta = _autoCaptureDmgSegmentsEmitted - _autoCaptureDmgSegmentsEmittedSnapshot;
+                int dmgMobsHitPeak = _autoCaptureDmgMobsHitPeakSinceLastLog;
+                _autoCaptureHpAttemptedSnapshot = _autoCaptureHpAttempted;
+                _autoCaptureHpFiredSnapshot = _autoCaptureHpFired;
+                _autoCaptureHpSkippedCooldownSnapshot = _autoCaptureHpSkippedCooldown;
+                _autoCaptureDmgAttemptedSnapshot = _autoCaptureDmgAttempted;
+                _autoCaptureDmgFiredSnapshot = _autoCaptureDmgFired;
+                _autoCaptureDmgSkippedCooldownSnapshot = _autoCaptureDmgSkippedCooldown;
+                _autoCaptureDmgSegmentsEmittedSnapshot = _autoCaptureDmgSegmentsEmitted;
+                _autoCaptureDmgMobsHitPeakSinceLastLog = 0;
+                System.Console.WriteLine(
+                    $"[AutoCap][Profile] frame={capturedFrames} profile={_autoCaptureCurrentProfile} hp_event_attempted={hpAttemptedDelta} hp_event_fired={hpFiredDelta} hp_event_skipped_cooldown={hpSkippedDelta} hp_active_mobs={_effectManager?.Combat?.ActiveMobHPBars ?? 0} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
             }
             var combat = _effectManager?.Combat;
+            var forceStateMobs = new List<MobItem>();
+            var fallbackMobs = new List<MobItem>();
 
             foreach (var mob in _mobPool.ActiveMobs)
             {
@@ -443,6 +575,7 @@ namespace HaCreator.MapSimulator
 
             foreach (var mob in _mobPool.ActiveMobs)
             {
+                bool hasForcedState = false;
                 switch (_autoCaptureCurrentProfile)
                 {
                     case AutoCaptureProfile.NormalMove:
@@ -453,11 +586,8 @@ namespace HaCreator.MapSimulator
                             if (!string.IsNullOrEmpty(moveAction))
                             {
                                 mob.ForceStateForDataset(moveAction);
+                                hasForcedState = true;
                             }
-                        }
-                        if (combat != null && _autoCaptureRandom.NextDouble() < 0.45)
-                        {
-                            TriggerAutoCaptureDamageVisuals(combat, mob, tick);
                         }
                         break;
                     }
@@ -469,11 +599,8 @@ namespace HaCreator.MapSimulator
                             if (!string.IsNullOrEmpty(attackAction))
                             {
                                 mob.ForceStateForDataset(attackAction);
+                                hasForcedState = true;
                             }
-                        }
-                        if (combat != null && _autoCaptureRandom.NextDouble() < 0.60)
-                        {
-                            TriggerAutoCaptureDamageVisuals(combat, mob, tick);
                         }
                         break;
                     }
@@ -485,31 +612,11 @@ namespace HaCreator.MapSimulator
                             if (!string.IsNullOrEmpty(hitAction))
                             {
                                 mob.ForceStateForDataset(hitAction);
+                                hasForcedState = true;
                             }
                         }
                         if (combat != null)
                         {
-                            if (_autoCaptureRandom.NextDouble() < 0.75)
-                            {
-                                TriggerAutoCaptureDamageVisuals(combat, mob, tick);
-                            }
-
-                            if (_autoCaptureRandom.NextDouble() < 0.30)
-                            {
-                                int count = _autoCaptureRandom.Next(1, 4);
-                                for (int i = 0; i < count; i++)
-                                {
-                                    float xOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 150);
-                                    float yOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 140);
-                                    combat.AddHitEffect(
-                                        mob.CurrentX + xOffset,
-                                        mob.CurrentY + yOffset - 28,
-                                        tick,
-                                        _autoCaptureRandom.Next(0, 4),
-                                        _autoCaptureRandom.NextDouble() > 0.5,
-                                        null);
-                                }
-                            }
                         }
                         break;
                     }
@@ -523,6 +630,7 @@ namespace HaCreator.MapSimulator
                             {
                                 mob.ForceStateForDataset(dieAction);
                                 forcedDead = true;
+                                hasForcedState = true;
                             }
                         }
 
@@ -532,6 +640,7 @@ namespace HaCreator.MapSimulator
                             if (!string.IsNullOrEmpty(hitAction))
                             {
                                 mob.ForceStateForDataset(hitAction);
+                                hasForcedState = true;
                             }
                         }
 
@@ -539,37 +648,382 @@ namespace HaCreator.MapSimulator
                         {
                             combat.AddDeathEffectForMob(mob, tick);
                         }
-                        if (combat != null && _autoCaptureRandom.NextDouble() < 0.55)
-                        {
-                            TriggerAutoCaptureDamageVisuals(combat, mob, tick);
-                        }
                         break;
+                    }
+                }
+
+                if (hasForcedState)
+                {
+                    forceStateMobs.Add(mob);
+                }
+                else
+                {
+                    fallbackMobs.Add(mob);
+                }
+            }
+
+            if (combat == null)
+            {
+                return;
+            }
+
+            TryTriggerAutoCaptureDamageNumbers(combat, tick, forceStateMobs, fallbackMobs);
+        }
+
+        private void TryTriggerAutoCaptureDamageNumbers(CombatEffects combat, int tick, List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)
+        {
+            if (combat == null || _autoCaptureRandom == null || _autoCaptureDamageNumberControl == null)
+                return;
+
+            if (tick != _autoCaptureDmgFrameMarker)
+            {
+                _autoCaptureDmgFrameMarker = tick;
+                _autoCaptureDmgEventsUsedOnCaptureFrame = 0;
+                _autoCaptureDmgMobsHitCurrentFrame = 0;
+            }
+            if (tick != _autoCaptureHpFrameMarker)
+            {
+                _autoCaptureHpFrameMarker = tick;
+                _autoCaptureHpEventsUsedOnCaptureFrame = 0;
+            }
+
+            var candidates = BuildHpEventCandidates(forceStateMobs, fallbackMobs);
+            if (candidates.Count == 0)
+            {
+                // Fallback: when strict in-view filter empties out, keep a weak fallback
+                // to avoid fully silent bound events.
+                if (forceStateMobs != null && forceStateMobs.Count > 0)
+                {
+                    candidates.AddRange(forceStateMobs.OrderBy(m => DistanceToCameraCenterSq(m)));
+                }
+                if (fallbackMobs != null && fallbackMobs.Count > 0)
+                {
+                    candidates.AddRange(fallbackMobs.OrderBy(m => DistanceToCameraCenterSq(m)));
+                }
+            }
+
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+
+            int targetMobCount = ResolveDynamicBoundEventFrameLimit(candidates.Count);
+            int availableByFrame = Math.Max(0, targetMobCount - _autoCaptureDmgEventsUsedOnCaptureFrame);
+            int availableByHpFrame = Math.Max(0, targetMobCount - _autoCaptureHpEventsUsedOnCaptureFrame);
+            int availableByDmgHard = Math.Max(0, _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame - _autoCaptureDmgEventsUsedOnCaptureFrame);
+            int availableByHpHard = Math.Max(0, _autoCaptureHpBarControl.MaxHpEventsPerCaptureFrame - _autoCaptureHpEventsUsedOnCaptureFrame);
+            int availableByActiveHp = Math.Max(0, _autoCaptureHpBarControl.MaxHpActiveMobs - combat.ActiveMobHPBars);
+            int maxTargetMobs = Math.Min(
+                Math.Min(Math.Min(availableByFrame, availableByHpFrame), Math.Min(availableByDmgHard, availableByHpHard)),
+                availableByActiveHp);
+            if (maxTargetMobs <= 0)
+            {
+                return;
+            }
+            int selectedMobCount = Math.Min(Math.Min(targetMobCount, maxTargetMobs), Math.Min(6, candidates.Count));
+
+            double damageProb = _autoCaptureDamageNumberControl.GetProbability(_autoCaptureCurrentProfile);
+            double hpProb = _autoCaptureHpBarControl.GetProbability(_autoCaptureCurrentProfile);
+            double boundProb = Math.Min(damageProb, hpProb);
+            bool forceByTimeout = unchecked(tick - _autoCaptureDmgLastGlobalTick) > 1200;
+            if (!forceByTimeout && _autoCaptureRandom.NextDouble() >= boundProb)
+            {
+                return;
+            }
+
+            var selectedMobs = new List<MobItem>();
+            for (int i = 0; i < candidates.Count && selectedMobs.Count < selectedMobCount; i++)
+            {
+                if (candidates[i] != null)
+                {
+                    selectedMobs.Add(candidates[i]);
+                }
+            }
+
+            var usedPoolIds = new HashSet<int>();
+            for (int m = 0; m < selectedMobs.Count; m++)
+            {
+                var mob = selectedMobs[m];
+                if (mob == null || !usedPoolIds.Add(mob.PoolId))
+                {
+                    continue;
+                }
+
+                _autoCaptureDmgAttempted++;
+                _autoCaptureHpAttempted++;
+                if (!CanFireDamageEventForMob(mob, tick))
+                {
+                    _autoCaptureDmgSkippedCooldown++;
+                    continue;
+                }
+                if (!CanFireHpEventForMob(mob, tick))
+                {
+                    _autoCaptureHpSkippedCooldown++;
+                    continue;
+                }
+
+                int segmentCount = Math.Max(1, _autoCaptureRandom.Next(1, 7));
+                int availableByActiveDmg = Math.Max(0, _autoCaptureDamageNumberControl.MaxActiveNumbers - combat.ActiveDamageNumbers);
+                if (availableByActiveDmg <= 0)
+                {
+                    break;
+                }
+                segmentCount = Math.Min(segmentCount, availableByActiveDmg);
+
+                int emittedForMob = 0;
+                for (int burst = 0; burst < segmentCount; burst++)
+                {
+                    if (combat.ActiveDamageNumbers >= _autoCaptureDamageNumberControl.MaxActiveNumbers ||
+                        combat.ActiveMobHPBars >= _autoCaptureHpBarControl.MaxHpActiveMobs)
+                    {
+                        break;
+                    }
+
+                    // Bound event: hit effect + damage number + hp bar in one atomic visual bundle.
+                    float xOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 42);
+                    float yOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 20);
+                    int eventTick = tick + (burst * 14);
+                    Color hitTint = AutoCapHitEffectTintPalette[_autoCaptureRandom.Next(AutoCapHitEffectTintPalette.Length)];
+                    combat.AddHitEffect(
+                        mob.CurrentX + xOffset,
+                        mob.CurrentY - 24 + yOffset,
+                        eventTick,
+                        _autoCaptureRandom.Next(0, 4),
+                        _autoCaptureRandom.NextDouble() > 0.5,
+                        hitTint);
+
+                    if (_autoCaptureCurrentProfile == AutoCaptureProfile.HitOcclusionHeavy)
+                    {
+                        int extraEffects = _autoCaptureRandom.Next(0, 2);
+                        for (int i = 0; i < extraEffects; i++)
+                        {
+                            float fx = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 60);
+                            float fy = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 40);
+                            combat.AddHitEffect(
+                                mob.CurrentX + xOffset + fx,
+                                mob.CurrentY - 24 + yOffset + fy,
+                                eventTick,
+                                _autoCaptureRandom.Next(0, 4),
+                                _autoCaptureRandom.NextDouble() > 0.5,
+                                hitTint);
+                        }
+                    }
+
+                    int damage = _autoCaptureRandom.Next(1200, 280000);
+                    bool isCritical = _autoCaptureRandom.NextDouble() < 0.28;
+                    int comboIndex = burst % 6;
+                    combat.AddPlayerDamage(
+                        damage,
+                        mob.CurrentX + xOffset,
+                        mob.CurrentY - 24f + yOffset,
+                        isCritical,
+                        eventTick,
+                        comboIndex);
+                    combat.OnMobDamaged(mob, eventTick);
+                    combat.RandomizeMobHPBarForDataset(mob.PoolId, _autoCaptureRandom);
+
+                    _autoCaptureDmgLastGlobalTick = eventTick;
+                    _autoCaptureDmgLastTickByMob[mob.PoolId] = eventTick;
+                    _autoCaptureDmgFired++;
+                    _autoCaptureHpLastGlobalTick = eventTick;
+                    _autoCaptureHpLastTickByMob[mob.PoolId] = eventTick;
+                    _autoCaptureHpFired++;
+                    _autoCaptureDmgSegmentsEmitted++;
+                    emittedForMob++;
+                }
+
+                if (emittedForMob > 0)
+                {
+                    _autoCaptureDmgLastGlobalTick = tick;
+                    _autoCaptureHpLastGlobalTick = tick;
+                    _autoCaptureDmgEventsUsedOnCaptureFrame++;
+                    _autoCaptureHpEventsUsedOnCaptureFrame++;
+                    _autoCaptureDmgMobsHit++;
+                    _autoCaptureDmgMobsHitCurrentFrame++;
+                    if (_autoCaptureDmgMobsHitCurrentFrame > _autoCaptureDmgMobsHitPeakSinceLastLog)
+                    {
+                        _autoCaptureDmgMobsHitPeakSinceLastLog = _autoCaptureDmgMobsHitCurrentFrame;
                     }
                 }
             }
         }
 
-        private void TriggerAutoCaptureDamageVisuals(CombatEffects combat, MobItem mob, int tick)
+        private int ResolveDynamicBoundEventFrameLimit(int visibleMobCount)
         {
-            if (combat == null || mob == null)
+            if (_autoCaptureDamageNumberControl == null)
+            {
+                return 1;
+            }
+
+            if (!_autoCaptureDamageNumberControl.UseMobRatioCap)
+            {
+                return Math.Max(1, _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame);
+            }
+
+            int raw = (int)Math.Round(
+                Math.Max(0, visibleMobCount) * _autoCaptureDamageNumberControl.MobRatio,
+                MidpointRounding.AwayFromZero);
+
+            int byRatio = ClampInt(
+                raw,
+                _autoCaptureDamageNumberControl.MinEventsPerCaptureFrame,
+                _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrameCap);
+
+            int hardCap = Math.Max(1, _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame);
+            return ClampInt(byRatio, 1, hardCap);
+        }
+
+        private static int ClampInt(int value, int min, int max)
+        {
+            if (value < min) return min;
+            if (value > max) return max;
+            return value;
+        }
+
+        private void TryTriggerAutoCaptureHpBars(CombatEffects combat, int tick, List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)
+        {
+            if (combat == null || _autoCaptureRandom == null || _autoCaptureHpBarControl == null)
+            {
                 return;
+            }
 
-            combat.OnMobDamaged(mob, tick);
-            combat.RandomizeMobHPBarForDataset(mob.PoolId, _autoCaptureRandom);
+            if (tick != _autoCaptureHpFrameMarker)
+            {
+                _autoCaptureHpFrameMarker = tick;
+                _autoCaptureHpEventsUsedOnCaptureFrame = 0;
+            }
 
-            // Keep floating damage numbers visible in AutoCap outputs.
-            int damage = _autoCaptureRandom != null
-                ? _autoCaptureRandom.Next(1200, 280000)
-                : 10000;
-            bool isCritical = _autoCaptureRandom?.NextDouble() < 0.28;
-            int comboIndex = _autoCaptureRandom?.Next(0, 3) ?? 0;
-            combat.AddPlayerDamage(
-                damage,
-                mob.CurrentX,
-                mob.CurrentY - 24f,
-                isCritical,
-                tick,
-                comboIndex);
+            if (_autoCaptureHpEventsUsedOnCaptureFrame >= _autoCaptureHpBarControl.MaxHpEventsPerCaptureFrame)
+            {
+                return;
+            }
+
+            if (combat.ActiveMobHPBars >= _autoCaptureHpBarControl.MaxHpActiveMobs)
+            {
+                return;
+            }
+
+            double hpProb = _autoCaptureHpBarControl.GetProbability(_autoCaptureCurrentProfile);
+            if (_autoCaptureRandom.NextDouble() >= hpProb)
+            {
+                return;
+            }
+
+            var candidates = BuildHpEventCandidates(forceStateMobs, fallbackMobs);
+            foreach (var mob in candidates)
+            {
+                _autoCaptureHpAttempted++;
+                if (!CanFireHpEventForMob(mob, tick))
+                {
+                    _autoCaptureHpSkippedCooldown++;
+                    continue;
+                }
+
+                combat.OnMobDamaged(mob, tick);
+                combat.RandomizeMobHPBarForDataset(mob.PoolId, _autoCaptureRandom);
+                _autoCaptureHpLastGlobalTick = tick;
+                _autoCaptureHpLastTickByMob[mob.PoolId] = tick;
+                _autoCaptureHpEventsUsedOnCaptureFrame++;
+                _autoCaptureHpFired++;
+                break;
+            }
+        }
+
+        private List<MobItem> BuildHpEventCandidates(List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)
+        {
+            var list = new List<MobItem>();
+            if (forceStateMobs != null && forceStateMobs.Count > 0)
+            {
+                list.AddRange(forceStateMobs.Where(IsMobInCameraView).OrderBy(m => DistanceToCameraCenterSq(m)));
+            }
+            if (fallbackMobs != null && fallbackMobs.Count > 0)
+            {
+                list.AddRange(fallbackMobs.Where(IsMobInCameraView).OrderBy(m => DistanceToCameraCenterSq(m)));
+            }
+            return list;
+        }
+
+        private bool IsMobInCameraView(MobItem mob)
+        {
+            if (mob == null)
+            {
+                return false;
+            }
+
+            int marginX = Math.Min(AutoCapViewSafeMarginPx, Math.Max(8, _renderParams.RenderWidth / 6));
+            int marginY = Math.Min(AutoCapViewSafeMarginPx, Math.Max(8, _renderParams.RenderHeight / 6));
+
+            float worldLeft = mapShiftX - _mapCenterX + marginX;
+            float worldTop = mapShiftY - _mapCenterY + marginY;
+            float worldRight = mapShiftX - _mapCenterX + _renderParams.RenderWidth - marginX;
+            float worldBottom = mapShiftY - _mapCenterY + _renderParams.RenderHeight - marginY;
+
+            float x = mob.CurrentX;
+            float y = mob.CurrentY;
+            return x >= worldLeft && x <= worldRight && y >= worldTop && y <= worldBottom;
+        }
+
+        private double DistanceToCameraCenterSq(MobItem mob)
+        {
+            if (mob == null)
+            {
+                return double.MaxValue;
+            }
+
+            double centerX = mapShiftX;
+            double centerY = mapShiftY;
+            double dx = mob.CurrentX - centerX;
+            double dy = mob.CurrentY - centerY;
+            return dx * dx + dy * dy;
+        }
+
+        private bool CanFireHpEventForMob(MobItem mob, int tick)
+        {
+            if (mob == null)
+            {
+                return false;
+            }
+
+            int globalElapsed = unchecked(tick - _autoCaptureHpLastGlobalTick);
+            if (globalElapsed < _autoCaptureHpBarControl.HpEventGlobalCooldownMs)
+            {
+                return false;
+            }
+
+            if (_autoCaptureHpLastTickByMob.TryGetValue(mob.PoolId, out int lastPerMobTick))
+            {
+                int perMobElapsed = unchecked(tick - lastPerMobTick);
+                if (perMobElapsed < _autoCaptureHpBarControl.HpEventPerMobCooldownMs)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private bool CanFireDamageEventForMob(MobItem mob, int tick)
+        {
+            if (mob == null)
+            {
+                return false;
+            }
+
+            int globalElapsed = unchecked(tick - _autoCaptureDmgLastGlobalTick);
+            if (globalElapsed < _autoCaptureDamageNumberControl.GlobalCooldownMs)
+            {
+                return false;
+            }
+
+            if (_autoCaptureDmgLastTickByMob.TryGetValue(mob.PoolId, out int lastPerMobTick))
+            {
+                int perMobElapsed = unchecked(tick - lastPerMobTick);
+                if (perMobElapsed < _autoCaptureDamageNumberControl.PerMobCooldownMs)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static int ResolveMobLabelClassId(MobItem mob)
@@ -4846,7 +5300,10 @@ namespace HaCreator.MapSimulator
                         var hpBarRects = _effectManager.Combat.GetActiveHPBarBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
                         foreach (var hpRect in hpBarRects)
                         {
-                            boundsList.Add((2, hpRect)); // class 2 for HP Bar
+                            if (HasNearbyMobBox(boundsList, hpRect, HpBarPairingRadiusPx))
+                            {
+                                boundsList.Add((2, hpRect)); // class 2 for HP Bar
+                            }
                         }
                     }
 
@@ -4855,6 +5312,37 @@ namespace HaCreator.MapSimulator
             }
 
             base.Draw(gameTime);
+        }
+
+        private static bool HasNearbyMobBox(List<(int classId, Rectangle bounds)> boundsList, Rectangle hpRect, int radiusPx)
+        {
+            if (boundsList == null || boundsList.Count == 0)
+            {
+                return false;
+            }
+
+            int hpCenterX = hpRect.Left + hpRect.Width / 2;
+            int hpCenterY = hpRect.Top + hpRect.Height / 2;
+            int r2 = radiusPx * radiusPx;
+
+            foreach (var (classId, rect) in boundsList)
+            {
+                if (classId != 0 && classId != 1)
+                {
+                    continue;
+                }
+
+                int mobCenterX = rect.Left + rect.Width / 2;
+                int mobCenterY = rect.Top + rect.Height / 2;
+                int dx = hpCenterX - mobCenterX;
+                int dy = hpCenterY - mobCenterY;
+                int d2 = dx * dx + dy * dy;
+                if (d2 <= r2)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
