@@ -20,6 +20,8 @@ namespace HaCreator.MapSimulator.Automation
         public int StepX { get; set; } = 96;
         public int StepY { get; set; } = 96;
         public int TargetFrames { get; set; } = 120;
+        public int CaptureWarmupMs { get; set; } = 5000;
+        public int CameraTickBudgetOverride { get; set; } = 0;
         public float TimeScale { get; set; } = 20f;
         public int Seed { get; set; } = 20260505;
         public bool MuteAudio { get; set; } = true;
@@ -219,16 +221,16 @@ namespace HaCreator.MapSimulator.Automation
     {
         public bool Enabled { get; set; } = true;
         public AutoCaptureHitEffectPaletteMode PaletteMode { get; set; } = AutoCaptureHitEffectPaletteMode.Extended;
-        public double AlphaMin { get; set; } = 0.45d;
-        public double AlphaMax { get; set; } = 0.90d;
-        public double ScaleMin { get; set; } = 0.70d;
-        public double ScaleMax { get; set; } = 1.50d;
-        public int LifetimeMsMin { get; set; } = 120;
-        public int LifetimeMsMax { get; set; } = 360;
+        public double AlphaMin { get; set; } = 0.35d;
+        public double AlphaMax { get; set; } = 0.75d;
+        public double ScaleMin { get; set; } = 0.65d;
+        public double ScaleMax { get; set; } = 1.25d;
+        public int LifetimeMsMin { get; set; } = 100;
+        public int LifetimeMsMax { get; set; } = 260;
         public int ExtraLayersMin { get; set; } = 0;
-        public int ExtraLayersMax { get; set; } = 2;
-        public int JitterPxX { get; set; } = 48;
-        public int JitterPxY { get; set; } = 28;
+        public int ExtraLayersMax { get; set; } = 1;
+        public int JitterPxX { get; set; } = 32;
+        public int JitterPxY { get; set; } = 20;
         public List<int> VariationPool { get; set; } = new List<int> { 0, 1, 2, 3 };
 
         public static AutoCaptureHitEffectControl CreateDefault()

@@ -243,7 +243,9 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureDmgFiredSnapshot = 0;
         private int _autoCaptureDmgSkippedCooldownSnapshot = 0;
         private int _autoCaptureDmgSegmentsEmittedSnapshot = 0;
-        private const int HpBarPairingRadiusPx = 120;
+        private int _autoCaptureStartTick = 0;
+        private bool _autoCaptureWarmupLogged = false;
+        private const int HpBarPairingRadiusPx = 220;
         private const int AutoCapViewSafeMarginPx = 80;
         private static readonly Color[] AutoCapHitEffectTintPaletteBasic = new[]
         {
@@ -394,6 +396,8 @@ namespace HaCreator.MapSimulator
             _autoCaptureDmgFiredSnapshot = 0;
             _autoCaptureDmgSkippedCooldownSnapshot = 0;
             _autoCaptureDmgSegmentsEmittedSnapshot = 0;
+            _autoCaptureStartTick = Environment.TickCount;
+            _autoCaptureWarmupLogged = false;
             BuildAutoCaptureScanPath();
             _autoCaptureStarted = true;
 
@@ -407,6 +411,8 @@ namespace HaCreator.MapSimulator
                 $"[AutoCap] dmg_num_ctrl global_cd={_autoCaptureDamageNumberControl.GlobalCooldownMs}ms per_mob_cd={_autoCaptureDamageNumberControl.PerMobCooldownMs}ms per_capture_frame={_autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame} max_active_numbers={_autoCaptureDamageNumberControl.MaxActiveNumbers}");
             System.Console.WriteLine(
                 $"[AutoCap] hit_effect_ctrl enabled={_autoCaptureHitEffectControl.Enabled} palette={_autoCaptureHitEffectControl.PaletteMode} alpha={_autoCaptureHitEffectControl.AlphaMin:0.##}-{_autoCaptureHitEffectControl.AlphaMax:0.##} scale={_autoCaptureHitEffectControl.ScaleMin:0.##}-{_autoCaptureHitEffectControl.ScaleMax:0.##} lifetime={_autoCaptureHitEffectControl.LifetimeMsMin}-{_autoCaptureHitEffectControl.LifetimeMsMax}ms layers={_autoCaptureHitEffectControl.ExtraLayersMin}-{_autoCaptureHitEffectControl.ExtraLayersMax} jitter={_autoCaptureHitEffectControl.JitterPxX}x{_autoCaptureHitEffectControl.JitterPxY} variations=[{string.Join(",", _autoCaptureHitEffectControl.VariationPool)}]");
+            System.Console.WriteLine(
+                $"[AutoCap] capture_warmup_ms={Math.Max(0, _autoCaptureOptions.CaptureWarmupMs)}");
         }
 
         private void BuildAutoCaptureScanPath()
@@ -480,6 +486,12 @@ namespace HaCreator.MapSimulator
                     }
                 }
                 row++;
+            }
+
+            int overrideBudget = Math.Max(0, _autoCaptureOptions?.CameraTickBudgetOverride ?? 0);
+            if (overrideBudget > 0)
+            {
+                _autoCaptureCameraTickBudget = overrideBudget;
             }
 
             if (_autoCaptureScanPath.Count == 0)
@@ -821,9 +833,11 @@ namespace HaCreator.MapSimulator
                             hitScale,
                             hitLifetimeMs);
 
-                        int extraEffects = _autoCaptureCurrentProfile == AutoCaptureProfile.HitOcclusionHeavy
-                            ? Math.Max(1, PickAutoCaptureExtraLayers())
-                            : PickAutoCaptureExtraLayers();
+                        int extraEffects = PickAutoCaptureExtraLayers();
+                        if (_autoCaptureCurrentProfile == AutoCaptureProfile.HitOcclusionHeavy)
+                        {
+                            extraEffects = Math.Min(1, Math.Max(0, extraEffects));
+                        }
                         for (int i = 0; i < extraEffects; i++)
                         {
                             float fx = jitterXRange == 0 ? 0f : (float)((_autoCaptureRandom.NextDouble() - 0.5) * (jitterXRange * 2));
@@ -967,8 +981,8 @@ namespace HaCreator.MapSimulator
             double max = _autoCaptureHitEffectControl.AlphaMax;
             if (profile == AutoCaptureProfile.HitOcclusionHeavy)
             {
-                min = Math.Min(1.0d, min + 0.08d);
-                max = Math.Min(1.0d, max + 0.06d);
+                min = Math.Max(0.20d, min - 0.03d);
+                max = Math.Max(min, Math.Min(1.0d, max - 0.03d));
             }
             return min + ((max - min) * _autoCaptureRandom.NextDouble());
         }
@@ -984,8 +998,8 @@ namespace HaCreator.MapSimulator
             double max = _autoCaptureHitEffectControl.ScaleMax;
             if (profile == AutoCaptureProfile.HitOcclusionHeavy)
             {
-                min += 0.10d;
-                max += 0.20d;
+                min += 0.02d;
+                max += 0.08d;
             }
             min = Math.Clamp(min, 0.3d, 2.5d);
             max = Math.Clamp(max, 0.3d, 2.5d);
@@ -1007,8 +1021,8 @@ namespace HaCreator.MapSimulator
             int max = _autoCaptureHitEffectControl.LifetimeMsMax;
             if (profile == AutoCaptureProfile.HitOcclusionHeavy)
             {
-                min += 20;
-                max += 60;
+                min = Math.Max(60, min - 10);
+                max = Math.Max(min + 1, max - 20);
             }
             min = Math.Clamp(min, 60, 2000);
             max = Math.Clamp(max, 60, 2000);
@@ -1165,23 +1179,7 @@ namespace HaCreator.MapSimulator
             return true;
         }
 
-        private static int ResolveMobLabelClassId(MobItem mob)
-        {
-            if (mob?.AI?.IsDead == true)
-                return 1;
-
-            string action = mob?.CurrentAction;
-            if (!string.IsNullOrEmpty(action))
-            {
-                string s = action.ToLowerInvariant();
-                if (s.StartsWith("die", StringComparison.Ordinal) ||
-                    s.StartsWith("dead", StringComparison.Ordinal) ||
-                    s.StartsWith("death", StringComparison.Ordinal))
-                    return 1;
-            }
-
-            return 0;
-        }
+        private static int ResolveMobLabelClassId(MobItem mob) => 0;
 
 
         // Debug rendering data (collected during draw, rendered in separate pass)
@@ -5411,42 +5409,98 @@ namespace HaCreator.MapSimulator
             {
                 if (_datasetGenerator.ShouldCaptureFrame())
                 {
-                    List<(int classId, Rectangle bounds)> boundsList = new List<(int classId, Rectangle bounds)>();
-                    if (_mobPool != null)
+                    bool skipCaptureThisFrame = false;
+                    int warmupMs = Math.Max(0, _autoCaptureOptions?.CaptureWarmupMs ?? 0);
+                    if (warmupMs > 0)
                     {
-                        foreach (var mob in _mobPool.ActiveMobs)
+                        int elapsedSinceStart = unchecked(TickCount - _autoCaptureStartTick);
+                        if (elapsedSinceStart < warmupMs)
                         {
-                            var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
-                            if (rect != null)
+                            if (!_autoCaptureWarmupLogged)
                             {
-                                boundsList.Add((ResolveMobLabelClassId(mob), rect.Value));
+                                System.Console.WriteLine($"[AutoCap] warmup skipping frames for {warmupMs}ms");
+                                _autoCaptureWarmupLogged = true;
                             }
-                        }
-
-                        foreach (var mob in _mobPool.DyingMobs)
-                        {
-                            var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
-                            if (rect != null)
-                            {
-                                boundsList.Add((1, rect.Value)); // class 1 for dead/dying mob
-                            }
+                            skipCaptureThisFrame = true;
                         }
                     }
 
-                    // Get HP bars bounds
-                    if (_effectManager?.Combat != null)
+                    if (!skipCaptureThisFrame)
                     {
-                        var hpBarRects = _effectManager.Combat.GetActiveHPBarBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
-                        foreach (var hpRect in hpBarRects)
+                        List<(int classId, Rectangle bounds)> boundsList = new List<(int classId, Rectangle bounds)>();
+                        if (_mobPool != null)
                         {
-                            if (HasNearbyMobBox(boundsList, hpRect, HpBarPairingRadiusPx))
+                            foreach (var mob in _mobPool.ActiveMobs)
                             {
-                                boundsList.Add((2, hpRect)); // class 2 for HP Bar
+                                var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
+                                if (rect != null)
+                                {
+                                    boundsList.Add((ResolveMobLabelClassId(mob), rect.Value));
+                                }
+                            }
+
+                            // class_1（死亡）低频保留：仅在 death 档写入，且单帧最多 1 个。
+                            if (_autoCaptureCurrentProfile == AutoCaptureProfile.DeathHeavy && _autoCaptureRandom.NextDouble() < 0.20)
+                            {
+                                int deadAdded = 0;
+                                foreach (var mob in _mobPool.DyingMobs)
+                                {
+                                    var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
+                                    if (rect == null)
+                                    {
+                                        continue;
+                                    }
+
+                                    boundsList.Add((1, rect.Value));
+                                    deadAdded++;
+                                    if (deadAdded >= 1)
+                                    {
+                                        break;
+                                    }
+                                }
                             }
                         }
-                    }
 
-                    _datasetGenerator.SaveFrameAndLabels(GraphicsDevice, boundsList);
+                        // Get HP bars bounds
+                        if (!skipCaptureThisFrame && _effectManager?.Combat != null)
+                        {
+                            var hpBarRects = _effectManager.Combat.GetActiveHPBarBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
+                            foreach (var hpRect in hpBarRects)
+                            {
+                                bool paired = HasNearbyMobBox(boundsList, hpRect, HpBarPairingRadiusPx);
+                                bool fallbackAllow = !paired && _autoCaptureRandom != null && _autoCaptureRandom.NextDouble() < 0.35;
+                                if (paired || fallbackAllow)
+                                {
+                                    boundsList.Add((2, NormalizeHpBarRect(hpRect))); // class 2 for HP Bar
+                                }
+                            }
+                        }
+
+                        // 宽松门控：只跳过完全无目标帧，避免长时间“0 保存”卡死。
+                        if (IsAutoCaptureEnabled)
+                        {
+                            int frameWidth = GraphicsDevice?.PresentationParameters?.BackBufferWidth ?? 0;
+                            int frameHeight = GraphicsDevice?.PresentationParameters?.BackBufferHeight ?? 0;
+                            int usableCount = CountUsableCaptureRects(boundsList, frameWidth, frameHeight);
+                            bool hasUsableClass0 = HasUsableClassId(boundsList, 0, frameWidth, frameHeight);
+                            bool hasUsableClass2 = HasUsableClassId(boundsList, 2, frameWidth, frameHeight);
+
+                            if (usableCount == 0)
+                            {
+                                skipCaptureThisFrame = true;
+                            }
+                            else if (!hasUsableClass0 && !hasUsableClass2)
+                            {
+                                // 仅有 class_1（死亡）时跳过，避免 class_1 占比异常偏高。
+                                skipCaptureThisFrame = true;
+                            }
+                        }
+
+                        if (!skipCaptureThisFrame)
+                        {
+                            _datasetGenerator.SaveFrameAndLabels(GraphicsDevice, boundsList);
+                        }
+                    }
                 }
             }
 
@@ -5483,6 +5537,100 @@ namespace HaCreator.MapSimulator
             }
             return false;
         }
+
+        private static bool HasAnyClassId(List<(int classId, Rectangle bounds)> boundsList, int classId)
+        {
+            if (boundsList == null || boundsList.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var item in boundsList)
+            {
+                if (item.classId == classId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static Rectangle NormalizeHpBarRect(Rectangle hpRect)
+        {
+            const int MinHpWidth = 10;
+            const int MinHpHeight = 4;
+            int width = Math.Max(MinHpWidth, hpRect.Width);
+            int height = Math.Max(MinHpHeight, hpRect.Height);
+            int centerX = hpRect.Left + hpRect.Width / 2;
+            int centerY = hpRect.Top + hpRect.Height / 2;
+            int left = centerX - width / 2;
+            int top = centerY - height / 2;
+            return new Rectangle(left, top, width, height);
+        }
+
+        private static Rectangle ClampRectToFrame(Rectangle rect, int width, int height)
+        {
+            if (width <= 0 || height <= 0)
+            {
+                return Rectangle.Empty;
+            }
+
+            int left = Math.Max(0, rect.Left);
+            int top = Math.Max(0, rect.Top);
+            int right = Math.Min(width, rect.Right);
+            int bottom = Math.Min(height, rect.Bottom);
+            if (right <= left || bottom <= top)
+            {
+                return Rectangle.Empty;
+            }
+
+            return new Rectangle(left, top, right - left, bottom - top);
+        }
+
+        private static bool IsUsableCaptureRect(Rectangle rect, int width, int height)
+        {
+            Rectangle clipped = ClampRectToFrame(rect, width, height);
+            return clipped.Width >= 2 && clipped.Height >= 2;
+        }
+
+        private static int CountUsableCaptureRects(List<(int classId, Rectangle bounds)> boundsList, int width, int height)
+        {
+            if (boundsList == null || boundsList.Count == 0)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            foreach (var item in boundsList)
+            {
+                if (IsUsableCaptureRect(item.bounds, width, height))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static bool HasUsableClassId(List<(int classId, Rectangle bounds)> boundsList, int classId, int width, int height)
+        {
+            if (boundsList == null || boundsList.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (var item in boundsList)
+            {
+                if (item.classId == classId && IsUsableCaptureRect(item.bounds, width, height))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
 
         /// <summary>
         /// Draws the player character

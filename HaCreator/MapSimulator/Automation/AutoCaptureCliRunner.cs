@@ -28,6 +28,8 @@ namespace HaCreator.MapSimulator.Automation
             public HitEffectControl hit_effect_control { get; set; } = new HitEffectControl();
             public int seed { get; set; } = 20260505;
             public int target_frames { get; set; } = 180;
+            public int capture_warmup_ms { get; set; } = 5000;
+            public int camera_tick_budget { get; set; } = 0;
             public bool mute_audio { get; set; } = true;
         }
 
@@ -176,6 +178,8 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"  resolutions  : {string.Join(", ", jobResolutions)}");
                 Console.WriteLine($"  scan_step_px : {job.scan_step_px?.x ?? 96}, {job.scan_step_px?.y ?? 96}");
                 Console.WriteLine($"  target_frames: {Math.Max(1, job.target_frames)}");
+                Console.WriteLine($"  warmup_ms    : {Math.Max(0, job.capture_warmup_ms)}");
+                Console.WriteLine($"  camera_budget: {Math.Max(0, job.camera_tick_budget)}");
                 Console.WriteLine($"  seed         : {job.seed}");
                 Console.WriteLine($"  mute_audio   : {job.mute_audio}");
                 Console.WriteLine($"  profile_mix  : normal_move={job.capture_profile_mix?.normal_move ?? 30}, attack_heavy={job.capture_profile_mix?.attack_heavy ?? 30}, hit_occlusion_heavy={job.capture_profile_mix?.hit_occlusion_heavy ?? 25}, death_heavy={job.capture_profile_mix?.death_heavy ?? 15}");
@@ -250,6 +254,8 @@ namespace HaCreator.MapSimulator.Automation
                                 StepX = Math.Max(16, job.scan_step_px?.x ?? 96),
                                 StepY = Math.Max(16, job.scan_step_px?.y ?? 96),
                                 TargetFrames = Math.Max(1, job.target_frames),
+                                CaptureWarmupMs = Math.Max(0, job.capture_warmup_ms),
+                                CameraTickBudgetOverride = Math.Max(0, job.camera_tick_budget),
                                 TimeScale = Math.Max(1f, job.time_scale),
                                 Seed = job.seed,
                                 MuteAudio = job.mute_audio,
@@ -404,21 +410,81 @@ namespace HaCreator.MapSimulator.Automation
             var missing = new List<int>();
             foreach (int id in mapIds)
             {
-                if (TryLoadMapImage(id) == null)
+                bool fileExists = MapImgFileExists(id);
+                if (!fileExists)
                 {
                     missing.Add(id);
+                    continue;
+                }
+
+                // 仅做可加载性预热，不作为 hard gate（避免解密/解析差异导致 dry-run 被误拦截）
+                if (TryLoadMapImage(id) == null)
+                {
+                    Console.WriteLine($"[AutoCap][警告] map={id:D9} 文件存在但预加载失败，继续执行（运行时再尝试加载）。");
                 }
             }
             return missing;
+        }
+
+        private static bool MapImgFileExists(int mapId)
+        {
+            string padded = mapId.ToString("D9");
+            string folder = padded.Substring(0, 1);
+            string relPathFlat = $"Map{folder}/{padded}.img";
+            string relPathNested = $"Map/Map{folder}/{padded}.img";
+
+            var dataSource = Program.DataSource;
+            if (dataSource is ImgFileSystemDataSource imgDs)
+            {
+                string basePath = imgDs.Manager?.VersionPath;
+                if (!string.IsNullOrWhiteSpace(basePath))
+                {
+                    string nestedPath = Path.Combine(basePath, "Map", relPathNested.Replace('/', Path.DirectorySeparatorChar));
+                    string flatPath = Path.Combine(basePath, "Map", relPathFlat.Replace('/', Path.DirectorySeparatorChar));
+                    if (File.Exists(nestedPath) || File.Exists(flatPath))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return dataSource?.ImageExists("Map", relPathNested) == true
+                || dataSource?.ImageExists("Map", relPathFlat) == true;
         }
 
         private static WzImage TryLoadMapImage(int mapId)
         {
             string padded = mapId.ToString("D9");
             string folder = padded.Substring(0, 1);
-            string relPath = $"Map/Map{folder}/{padded}.img";
-            return Program.DataSource?.GetImageByPath($"Map/{relPath}")
-                   ?? Program.DataSource?.GetImage("Map", relPath);
+            string relPathFlat = $"Map{folder}/{padded}.img";
+            string relPathNested = $"Map/Map{folder}/{padded}.img";
+
+            // IMG filesystem layouts differ by extraction/version:
+            // 1) Map/Map1/100020000.img
+            // 2) Map/Map/Map1/100020000.img
+            // Try both absolute and category-relative styles.
+            var dataSource = Program.DataSource;
+            if (dataSource == null)
+            {
+                return null;
+            }
+
+            WzImage image =
+                dataSource.GetImage("Map", relPathNested)
+                ?? dataSource.GetImage("Map", relPathFlat)
+                ?? dataSource.GetImageByPath($"Map/{relPathNested}")
+                ?? dataSource.GetImageByPath($"Map/{relPathFlat}");
+
+            if (image == null && dataSource is ImgFileSystemDataSource imgDs)
+            {
+                string diagNested = imgDs.GetImageDiagnostics("Map", relPathNested);
+                string diagFlat = imgDs.GetImageDiagnostics("Map", relPathFlat);
+                Console.WriteLine($"[AutoCap][诊断] map={padded} load failed. nested=\"{relPathNested}\", flat=\"{relPathFlat}\"");
+                Console.WriteLine($"[AutoCap][诊断] nested:\n{diagNested}");
+                Console.WriteLine($"[AutoCap][诊断] flat:\n{diagFlat}");
+            }
+
+            return image;
         }
 
         private static Board LoadBoardForMap(int mapId)
@@ -441,7 +507,10 @@ namespace HaCreator.MapSimulator.Automation
 
             mapImage ??= TryLoadMapImage(mapId);
             if (mapImage == null)
+            {
+                Console.WriteLine($"[AutoCap][错误] map={mapId:D9} 运行时加载失败（文件存在={MapImgFileExists(mapId)}）。");
                 return null;
+            }
             if (!mapImage.Parsed)
                 mapImage.ParseImage();
 
