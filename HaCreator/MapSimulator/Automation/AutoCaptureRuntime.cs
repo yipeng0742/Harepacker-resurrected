@@ -12,6 +12,29 @@ namespace HaCreator.MapSimulator.Automation
         DeathHeavy
     }
 
+    internal enum AutoCaptureDataBucket
+    {
+        CleanBaseline,
+        AnchorDecoupling,
+        ChaosOcclusion,
+        PureNoise
+    }
+
+    internal enum AutoCaptureDamageTemplateStyle
+    {
+        Realistic,
+        Robust
+    }
+
+    internal enum AutoCaptureDamageTemplateKind
+    {
+        Single,
+        DoubleTap,
+        RapidCombo,
+        StaggerCombo,
+        Finisher
+    }
+
     internal sealed class AutoCaptureRunOptions
     {
         public int MapId { get; set; }
@@ -25,6 +48,8 @@ namespace HaCreator.MapSimulator.Automation
         public float TimeScale { get; set; } = 20f;
         public int Seed { get; set; } = 20260505;
         public bool MuteAudio { get; set; } = true;
+        public int WriterThreads { get; set; } = 4;
+        public int WriterQueueCapacity { get; set; } = 128;
         public Dictionary<AutoCaptureProfile, int> CaptureProfileMix { get; set; } =
             CreateDefaultProfileMix();
         public AutoCaptureHpBarControl HpBarControl { get; set; } =
@@ -33,6 +58,12 @@ namespace HaCreator.MapSimulator.Automation
             AutoCaptureDamageNumberControl.CreateDefault();
         public AutoCaptureHitEffectControl HitEffectControl { get; set; } =
             AutoCaptureHitEffectControl.CreateDefault();
+        public AutoCaptureCaptureGuardControl CaptureGuard { get; set; } =
+            AutoCaptureCaptureGuardControl.CreateDefault();
+        public AutoCaptureBucketMix BucketMix { get; set; } =
+            AutoCaptureBucketMix.CreateDefault();
+        public AutoCaptureBucketPolicy BucketPolicy { get; set; } =
+            AutoCaptureBucketPolicy.CreateDefault();
 
         public static Dictionary<AutoCaptureProfile, int> CreateDefaultProfileMix()
         {
@@ -80,6 +111,99 @@ namespace HaCreator.MapSimulator.Automation
         public AutoCaptureHitEffectControl GetNormalizedHitEffectControl()
         {
             return (HitEffectControl ?? AutoCaptureHitEffectControl.CreateDefault()).Normalize();
+        }
+
+        public AutoCaptureCaptureGuardControl GetNormalizedCaptureGuard()
+        {
+            return (CaptureGuard ?? AutoCaptureCaptureGuardControl.CreateDefault()).Normalize();
+        }
+
+        public AutoCaptureBucketMix GetNormalizedBucketMix()
+        {
+            return (BucketMix ?? AutoCaptureBucketMix.CreateDefault()).Normalize();
+        }
+
+        public AutoCaptureBucketPolicy GetNormalizedBucketPolicy()
+        {
+            return (BucketPolicy ?? AutoCaptureBucketPolicy.CreateDefault()).Normalize();
+        }
+    }
+
+    internal sealed class AutoCaptureBucketMix
+    {
+        public int CleanBaseline { get; set; } = 20;
+        public int AnchorDecoupling { get; set; } = 20;
+        public int ChaosOcclusion { get; set; } = 40;
+        public int PureNoise { get; set; } = 20;
+
+        public static AutoCaptureBucketMix CreateDefault()
+        {
+            return new AutoCaptureBucketMix();
+        }
+
+        public AutoCaptureBucketMix Normalize()
+        {
+            int clean = Math.Max(0, CleanBaseline);
+            int anchor = Math.Max(0, AnchorDecoupling);
+            int chaos = Math.Max(0, ChaosOcclusion);
+            int noise = Math.Max(0, PureNoise);
+            int total = clean + anchor + chaos + noise;
+            if (total <= 0)
+            {
+                return CreateDefault();
+            }
+
+            return new AutoCaptureBucketMix
+            {
+                CleanBaseline = clean,
+                AnchorDecoupling = anchor,
+                ChaosOcclusion = chaos,
+                PureNoise = noise
+            };
+        }
+
+        public int GetWeight(AutoCaptureDataBucket bucket)
+        {
+            return bucket switch
+            {
+                AutoCaptureDataBucket.CleanBaseline => Math.Max(0, CleanBaseline),
+                AutoCaptureDataBucket.AnchorDecoupling => Math.Max(0, AnchorDecoupling),
+                AutoCaptureDataBucket.ChaosOcclusion => Math.Max(0, ChaosOcclusion),
+                AutoCaptureDataBucket.PureNoise => Math.Max(0, PureNoise),
+                _ => 0
+            };
+        }
+    }
+
+    internal sealed class AutoCaptureBucketPolicy
+    {
+        public bool EnforceDeadMutualExclusion { get; set; } = true;
+        public double StandMoveDamageLagProb { get; set; } = 0.03d;
+        public double HitDamageMinProb { get; set; } = 0.90d;
+        public string GlobalRatioScope { get; set; } = "global";
+
+        public static AutoCaptureBucketPolicy CreateDefault()
+        {
+            return new AutoCaptureBucketPolicy();
+        }
+
+        public AutoCaptureBucketPolicy Normalize()
+        {
+            string scope = string.IsNullOrWhiteSpace(GlobalRatioScope)
+                ? "global"
+                : GlobalRatioScope.Trim().ToLowerInvariant();
+            if (!string.Equals(scope, "global", StringComparison.Ordinal))
+            {
+                scope = "global";
+            }
+
+            return new AutoCaptureBucketPolicy
+            {
+                EnforceDeadMutualExclusion = EnforceDeadMutualExclusion,
+                StandMoveDamageLagProb = Math.Clamp(StandMoveDamageLagProb, 0d, 1d),
+                HitDamageMinProb = Math.Clamp(HitDamageMinProb, 0d, 1d),
+                GlobalRatioScope = scope
+            };
         }
     }
 
@@ -151,6 +275,9 @@ namespace HaCreator.MapSimulator.Automation
         public int PerMobCooldownMs { get; set; } = 900;
         public int MaxEventsPerCaptureFrame { get; set; } = 2;
         public int MaxActiveNumbers { get; set; } = 36;
+        public AutoCaptureDamageTemplateStyle TemplateStyle { get; set; } = AutoCaptureDamageTemplateStyle.Realistic;
+        public Dictionary<AutoCaptureDamageTemplateKind, int> TemplateWeights { get; set; } =
+            CreateDefaultTemplateWeights(AutoCaptureDamageTemplateStyle.Realistic);
         public Dictionary<AutoCaptureProfile, double> ProbByProfile { get; set; } =
             CreateDefaultProbabilities();
 
@@ -170,6 +297,30 @@ namespace HaCreator.MapSimulator.Automation
             };
         }
 
+        public static Dictionary<AutoCaptureDamageTemplateKind, int> CreateDefaultTemplateWeights(AutoCaptureDamageTemplateStyle style)
+        {
+            if (style == AutoCaptureDamageTemplateStyle.Robust)
+            {
+                return new Dictionary<AutoCaptureDamageTemplateKind, int>
+                {
+                    [AutoCaptureDamageTemplateKind.Single] = 15,
+                    [AutoCaptureDamageTemplateKind.DoubleTap] = 20,
+                    [AutoCaptureDamageTemplateKind.RapidCombo] = 30,
+                    [AutoCaptureDamageTemplateKind.StaggerCombo] = 20,
+                    [AutoCaptureDamageTemplateKind.Finisher] = 15
+                };
+            }
+
+            return new Dictionary<AutoCaptureDamageTemplateKind, int>
+            {
+                [AutoCaptureDamageTemplateKind.Single] = 35,
+                [AutoCaptureDamageTemplateKind.DoubleTap] = 30,
+                [AutoCaptureDamageTemplateKind.RapidCombo] = 20,
+                [AutoCaptureDamageTemplateKind.StaggerCombo] = 10,
+                [AutoCaptureDamageTemplateKind.Finisher] = 5
+            };
+        }
+
         public AutoCaptureDamageNumberControl Normalize()
         {
             var normalized = new AutoCaptureDamageNumberControl
@@ -182,11 +333,24 @@ namespace HaCreator.MapSimulator.Automation
                 PerMobCooldownMs = Math.Max(0, PerMobCooldownMs),
                 MaxEventsPerCaptureFrame = Math.Max(0, MaxEventsPerCaptureFrame),
                 MaxActiveNumbers = Math.Max(1, MaxActiveNumbers),
+                TemplateStyle = TemplateStyle,
+                TemplateWeights = new Dictionary<AutoCaptureDamageTemplateKind, int>(),
                 ProbByProfile = new Dictionary<AutoCaptureProfile, double>()
             };
             if (normalized.MinEventsPerCaptureFrame > normalized.MaxEventsPerCaptureFrameCap)
             {
                 normalized.MinEventsPerCaptureFrame = normalized.MaxEventsPerCaptureFrameCap;
+            }
+
+            var sourceTemplateWeights = TemplateWeights ?? CreateDefaultTemplateWeights(normalized.TemplateStyle);
+            foreach (AutoCaptureDamageTemplateKind kind in Enum.GetValues(typeof(AutoCaptureDamageTemplateKind)))
+            {
+                int value = sourceTemplateWeights.TryGetValue(kind, out int w) ? w : 0;
+                normalized.TemplateWeights[kind] = Math.Max(0, value);
+            }
+            if (normalized.TemplateWeights.Values.Sum() <= 0)
+            {
+                normalized.TemplateWeights = CreateDefaultTemplateWeights(normalized.TemplateStyle);
             }
 
             var source = ProbByProfile ?? CreateDefaultProbabilities();
@@ -290,6 +454,60 @@ namespace HaCreator.MapSimulator.Automation
             }
             normalized.VariationPool = normalized.VariationPool.Distinct().ToList();
             return normalized;
+        }
+    }
+
+    internal sealed class AutoCaptureCaptureGuardControl
+    {
+        public int ThroughputFloorPer10Minutes { get; set; } = 120;
+        public int ThroughputFloorPer5Minutes { get; set; } = 100;
+        public int HpLabelCapPerFrame { get; set; } = 1;
+        public double HpUnpairedFallbackProb { get; set; } = 0.02d;
+        public double DeathLabelProbInDeathProfile { get; set; } = 0.25d;
+        public int PointMaxAttempts { get; set; } = 8;
+        public int[] OffscreenRecoverBackoffMs { get; set; } = new[] { 100, 300, 500 };
+        public int MaxConsecutiveCaptureFailuresPerMap { get; set; } = 24;
+
+        public static AutoCaptureCaptureGuardControl CreateDefault()
+        {
+            return new AutoCaptureCaptureGuardControl();
+        }
+
+        public AutoCaptureCaptureGuardControl Normalize()
+        {
+            return new AutoCaptureCaptureGuardControl
+            {
+                ThroughputFloorPer10Minutes = Math.Max(1, ThroughputFloorPer10Minutes),
+                ThroughputFloorPer5Minutes = Math.Max(1, ThroughputFloorPer5Minutes),
+                HpLabelCapPerFrame = Math.Clamp(HpLabelCapPerFrame, 1, 2),
+                HpUnpairedFallbackProb = Math.Clamp(HpUnpairedFallbackProb, 0d, 1d),
+                DeathLabelProbInDeathProfile = Math.Clamp(DeathLabelProbInDeathProfile, 0d, 1d),
+                PointMaxAttempts = Math.Clamp(PointMaxAttempts, 1, 200),
+                OffscreenRecoverBackoffMs = NormalizeBackoff(OffscreenRecoverBackoffMs),
+                MaxConsecutiveCaptureFailuresPerMap = Math.Clamp(MaxConsecutiveCaptureFailuresPerMap, 1, 10000)
+            };
+        }
+
+        private static int[] NormalizeBackoff(int[] source)
+        {
+            var list = new List<int>();
+            if (source != null)
+            {
+                foreach (int ms in source)
+                {
+                    if (ms >= 0)
+                    {
+                        list.Add(Math.Clamp(ms, 0, 10_000));
+                    }
+                }
+            }
+
+            if (list.Count == 0)
+            {
+                list.AddRange(new[] { 100, 300, 500 });
+            }
+
+            return list.ToArray();
         }
     }
 

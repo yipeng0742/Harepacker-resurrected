@@ -148,15 +148,32 @@ namespace HaSharedLibrary
             // This ensures the player is in a proper state to restart
             if (wavePlayer.PlaybackState != PlaybackState.Playing)
             {
-                wavePlayer.Stop();
-                if (mpegStream != null)
-                    mpegStream.Seek(0, SeekOrigin.Begin);
-                else if (waveFileStream != null)
-                    waveFileStream.Seek(0, SeekOrigin.Begin);
+                try
+                {
+                    wavePlayer.Stop();
+                    if (mpegStream != null)
+                        mpegStream.Seek(0, SeekOrigin.Begin);
+                    else if (waveFileStream != null)
+                        waveFileStream.Seek(0, SeekOrigin.Begin);
+                }
+                catch (Exception ex)
+                {
+                    bPlaybackLoadedSuccess = false;
+                    Debug.WriteLine($"[WzSoundResourceStreamer] Stop/Seek failed: {ex.Message}");
+                    return;
+                }
             }
 
             Debug.WriteLine("[WzSoundResourceStreamer] Calling wavePlayer.Play()");
-            wavePlayer.Play();
+            try
+            {
+                wavePlayer.Play();
+            }
+            catch (Exception ex)
+            {
+                bPlaybackLoadedSuccess = false;
+                Debug.WriteLine($"[WzSoundResourceStreamer] Play failed: {ex.Message}");
+            }
         }
 
         public void Pause()
@@ -188,12 +205,27 @@ namespace HaSharedLibrary
         {
             get
             {
-                return wavePlayer.Volume;
+                try
+                {
+                    return wavePlayer.Volume;
+                }
+                catch
+                {
+                    return 0f;
+                }
             }
             set {
                 if (value >= 0 && value <= 1.0)
                 {
-                    this.wavePlayer.Volume = value;
+                    try
+                    {
+                        this.wavePlayer.Volume = value;
+                    }
+                    catch (Exception ex)
+                    {
+                        bPlaybackLoadedSuccess = false;
+                        Debug.WriteLine($"[WzSoundResourceStreamer] Set volume failed: {ex.Message}");
+                    }
                 }
             }
 
