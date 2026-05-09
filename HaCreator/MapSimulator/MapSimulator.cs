@@ -49,7 +49,7 @@ namespace HaCreator.MapSimulator
     /// 
     /// http://rbwhitaker.wikidot.com/xna-tutorials
     /// </summary>
-    public class MapSimulator : Microsoft.Xna.Framework.Game
+    public partial class MapSimulator : Microsoft.Xna.Framework.Game
     {
         public int mapShiftX = 0;
         public int mapShiftY = 0;
@@ -222,6 +222,7 @@ namespace HaCreator.MapSimulator
         private AutoCaptureRealSkillEffectControl _autoCaptureRealSkillEffectControl = AutoCaptureRealSkillEffectControl.CreateDefault();
         private AutoCaptureCaptureGuardControl _autoCaptureCaptureGuardControl = AutoCaptureCaptureGuardControl.CreateDefault();
         private bool _autoCaptureBucketPreparedForSampling = false;
+        private int _autoCaptureWaitTicks = 0;
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketAttempted = new Dictionary<AutoCaptureDataBucket, int>();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketSaved = new Dictionary<AutoCaptureDataBucket, int>();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketAttemptedSnapshot = new Dictionary<AutoCaptureDataBucket, int>();
@@ -266,6 +267,7 @@ namespace HaCreator.MapSimulator
         private sealed class AutoCapNativeDamageSkillEntry
         {
             public int SkillId { get; set; }
+            public int Job { get; set; }
             public int AttackCount { get; set; }
             public int DamagePercent { get; set; }
             public int CriticalRatePercent { get; set; }
@@ -358,6 +360,8 @@ namespace HaCreator.MapSimulator
         {
             Moving,
             Settling,
+            SceneSetup,
+            WaitRender,
             Sampling,
             EventLocked
         }
@@ -689,6 +693,42 @@ namespace HaCreator.MapSimulator
             {
                 throw new InvalidOperationException("[AutoCap][native_dmg_pool] built=0. Aborting per configuration.");
             }
+
+            // Export skill manifest for user reference
+            try
+            {
+                var manifestLines = new List<string>();
+                manifestLines.Add("# AutoCapture Skill Manifest");
+                manifestLines.Add("");
+                manifestLines.Add("| Skill ID | Chinese Name | Job ID | Is Attack |");
+                manifestLines.Add("| :--- | :--- | :--- | :--- |");
+
+                var sortedPool = _autoCaptureNativeDamageSkillPool
+                    .OrderBy(s => s.SkillId)
+                    .ToList();
+
+                foreach (var entry in sortedPool)
+                {
+                    string skillIdStr = entry.SkillId.ToString();
+                    string skillName = "Unknown Name";
+                    if (Program.InfoManager.SkillNameCache.TryGetValue(skillIdStr, out var nameTuple))
+                    {
+                        skillName = nameTuple.Item1;
+                    }
+                    manifestLines.Add($"| {entry.SkillId} | {skillName} | {entry.Job} | Yes |");
+                }
+
+                if (!string.IsNullOrEmpty(_autoCaptureOptions.OutputDir))
+                {
+                    string manifestPath = Path.Combine(_autoCaptureOptions.OutputDir, "AutoCapSkillManifest.md");
+                    System.IO.File.WriteAllLines(manifestPath, manifestLines);
+                    System.Console.WriteLine($"[AutoCap] Skill manifest exported to: {manifestPath}");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap] Failed to export skill manifest: {ex.Message}");
+            }
         }
 
         private bool TryBuildAutoCapNativeDamageSkill(
@@ -744,6 +784,7 @@ namespace HaCreator.MapSimulator
             entry = new AutoCapNativeDamageSkillEntry
             {
                 SkillId = skill.SkillId,
+                Job = skill.Job,
                 AttackCount = levelData.AttackCount,
                 DamagePercent = levelData.Damage,
                 CriticalRatePercent = Math.Max(0, levelData.CriticalRate),
@@ -818,28 +859,34 @@ namespace HaCreator.MapSimulator
             {
                 if (jobImg == null || !jobImg.Name.EndsWith(".img")) continue;
                 if (!jobImg.Parsed) jobImg.ParseImage();
-
-                foreach (var skillNode in jobImg.WzProperties)
+                string jobName = jobImg.Name.Replace(".img", "");
+                
+                // Class skills are usually under a "skill" property within the img
+                var skillRoot = jobImg["skill"];
+                var propertiesToScan = skillRoot != null ? skillRoot.WzProperties : jobImg.WzProperties;
+                
+                foreach (var skillNode in propertiesToScan)
                 {
                     if (skillNode == null || !int.TryParse(skillNode.Name, out int skillId)) continue;
                     scannedSkillNodes++;
                     if (seenSkillIds.Contains(skillId)) continue;
 
-                    var skill = BuildAutoCapSkillDataFromNode(skillId, skillNode);
+                    var skill = BuildAutoCapSkillDataFromNode(skillId, skillNode as WzImageProperty, jobName);
                     if (skill == null) { parseErrors++; continue; }
                     result.Add(skill);
                     seenSkillIds.Add(skillId);
                 }
             }
-
             return result;
         }
 
-        private SkillData BuildAutoCapSkillDataFromNode(int skillId, WzImageProperty skillNode)
+        private SkillData BuildAutoCapSkillDataFromNode(int skillId, WzImageProperty skillNode, string jobImgName)
         {
             if (skillNode == null) return null;
-            System.Console.WriteLine($"[AutoCap][诊断] Parsing Skill {skillId} (Node Name: {skillNode.Name})");
-            var skill = new SkillData { SkillId = skillId, Job = skillId / 10000 };
+            int jobId = 0;
+            int.TryParse(jobImgName, out jobId);
+
+            var skill = new SkillData { SkillId = skillId, Job = jobId };
             var effectNode = skillNode["effect"];
             if (effectNode != null) skill.Effect = BuildAutoCapSkillAnimationFromNode(effectNode, "effect");
             var hitNode = skillNode["hit"];
@@ -870,35 +917,42 @@ namespace HaCreator.MapSimulator
                     CriticalRate = Math.Max(0, TryReadWzInt(commonNode, "cr", 0))
                 };
             }
+            
             bool hasHit = skillNode["hit"] != null;
             bool hasBall = skillNode["ball"] != null;
+            bool hasAction = skillNode["action"] != null;
             bool isInvisible = TryReadWzInt(skillNode, "invisible", 0) > 0;
             
-            int commonDamage = commonNode != null ? TryReadWzInt(commonNode, "damage", TryReadWzInt(commonNode, "dam", 0)) : 0;
-            int commonMobCount = commonNode != null ? TryReadWzInt(commonNode, "mobCount", 0) : 0;
-            bool levelHasDamage = skill.Levels.Values.Any(v => v != null && v.Damage > 0);
-            bool levelHasMobCount = skill.Levels.Values.Any(v => v != null && v.MobCount > 0);
-            
-            // Core attack logic
-            skill.IsAttack = (hasHit || hasBall || commonDamage > 0 || commonMobCount > 0 || levelHasDamage || levelHasMobCount) 
-                            && !isInvisible;
+            // Fetch name for keyword filtering
+            string skillName = "";
+            if (Program.InfoManager.SkillNameCache.TryGetValue(skillId.ToString(), out var nameTuple)) {
+                skillName = nameTuple.Item1;
+            }
 
-            // Job validation
-            int jobGroup = skillId / 10000;
-            bool isValidJob = (jobGroup >= 100 && jobGroup < 9000);
-            if (!isValidJob) skill.IsAttack = false;
+            // Keyword Blacklist (Common Passive/Buff terms)
+            string[] blacklist = { "精通", "加强", "恢复", "恢复术", "快速", "愤怒之火", "伤害反击", "集中术", "疾风步", "药剂精通", "轻功", "生命吸收", "聚财术", "影分身", "影网术", "二段跳", "假动作", "武器用毒液", "转化术", "敛财术", "金钱护盾", "快动作", "疾驰", "强体术", "生命分流", "橡木伪装", "能量获得", "超人变形", "极速领域", "属性强化", "导航", "圣化之力", "祝福", "隐藏术", "复活", "神圣之火", "精灵的祝福", "团队治疗", "魂精灵", "灵魂迅移", "炎精灵", "风精灵", "夜精灵", "雷精灵", "战斗步伐", "抗压", "爆击强化", "攻击策略", "战神的意志" };
+            bool isBlacklisted = blacklist.Any(word => skillName.Contains(word));
 
-            // Diagnostic output
-            if (isValidJob) {
-                 System.Console.WriteLine($"[AutoCap][诊断] Skill {skillId}: IsAttack={skill.IsAttack} (hit={hasHit}, ball={hasBall}, cDmg={commonDamage}, lDmg={levelHasDamage}, inv={isInvisible})");
+            // Core Attack Criteria:
+            // 1. Must NOT be invisible.
+            // 2. Must belong to a valid player job (100-8000).
+            // 3. Must NOT be in the keyword blacklist.
+            // 4. Must have an 'action' (all active skills have this).
+            // 5. CRITICAL: Must have a 'hit' or 'ball' effect. (This distinguishes attack from buff).
+            skill.IsAttack = hasAction && (hasHit || hasBall) && !isInvisible && (jobId >= 100 && jobId < 8000) && !isBlacklisted;
+
+            if (skill.IsAttack) {
+                // Final damage check
+                bool actuallyHasDamage = skill.Levels.Values.Any(v => v != null && v.Damage > 0);
+                if (!actuallyHasDamage) skill.IsAttack = false;
             }
 
             // Ensure attack skills have AT LEAST 1 damage for sampling purposes
-            if (skill.IsAttack && skill.Levels.Count > 0)
+            if (skill.IsAttack)
             {
                 foreach (var lvl in skill.Levels.Values)
                 {
-                    if (lvl.Damage <= 0) lvl.Damage = 100;
+                    if (lvl != null && lvl.Damage <= 0) lvl.Damage = 100;
                 }
             }
 
@@ -1250,17 +1304,32 @@ namespace HaCreator.MapSimulator
                     }
 
                     _autoCaptureCameraHoldTicksRemaining = Math.Max(1, _autoCaptureCameraHoldTicksOnTarget);
+                    _autoCaptureCameraPhase = AutoCaptureCameraPhase.SceneSetup;
+                    return;
+                }
+                case AutoCaptureCameraPhase.SceneSetup:
+                {
+                    if (!_autoCaptureBucketPreparedForSampling)
+                    {
+                        PrepareAutoCaptureBucketForSampling();
+                    }
+                    _autoCaptureCameraPhase = AutoCaptureCameraPhase.WaitRender;
+                    _autoCaptureWaitTicks = 3; // Give effects 3 frames to spawn and animate
+                    return;
+                }
+                case AutoCaptureCameraPhase.WaitRender:
+                {
+                    if (_autoCaptureWaitTicks > 0)
+                    {
+                        _autoCaptureWaitTicks--;
+                        return;
+                    }
                     _autoCaptureCameraPhase = AutoCaptureCameraPhase.Sampling;
                     _autoCaptureSamplingDecisionPending = true;
                     return;
                 }
                 case AutoCaptureCameraPhase.Sampling:
                 {
-                    if (!_autoCaptureBucketPreparedForSampling)
-                    {
-                        PrepareAutoCaptureBucketForSampling();
-                    }
-
                     // Camera advances by capture cadence, not render FPS:
                     // each scan point must pass at least one capture decision.
                     if (_autoCaptureSamplingDecisionPending)
@@ -1926,21 +1995,9 @@ namespace HaCreator.MapSimulator
                 {
                     continue;
                 }
+
                 if (IsDeadLikeMob(mob))
                 {
-                    continue;
-                }
-
-                _autoCaptureDmgAttempted++;
-                _autoCaptureHpAttempted++;
-                if (!CanFireDamageEventForMob(mob, tick))
-                {
-                    _autoCaptureDmgSkippedCooldown++;
-                    continue;
-                }
-                if (!CanFireHpEventForMob(mob, tick))
-                {
-                    _autoCaptureHpSkippedCooldown++;
                     continue;
                 }
 
@@ -1955,9 +2012,9 @@ namespace HaCreator.MapSimulator
 
                 int emittedForMob = 0;
                 int baseDamage = RollAutoCapBaseDamageByTemplate(damageTemplate);
-                    int maxSegmentOffset = 0;
-                    for (int burst = 0; burst < segmentCount; burst++)
-                    {
+                int maxSegmentOffset = 0;
+                for (int burst = 0; burst < segmentCount; burst++)
+                {
                     if (combat.ActiveDamageNumbers >= _autoCaptureDamageNumberControl.MaxActiveNumbers ||
                         combat.ActiveMobHPBars >= _autoCaptureHpBarControl.MaxHpActiveMobs)
                     {
@@ -1969,7 +2026,6 @@ namespace HaCreator.MapSimulator
                         break;
                     }
 
-                    // Bound event: hit effect + damage number + hp bar in one atomic visual bundle.
                     float xOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 42);
                     float yOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 20);
                     int segmentOffset = ResolveSegmentTickOffsetMs(damageTemplate, burst);
@@ -1978,8 +2034,15 @@ namespace HaCreator.MapSimulator
                     {
                         maxSegmentOffset = segmentOffset;
                     }
+
                     if ((tuning?.DisableHitEffects != true) && (_autoCaptureHitEffectControl?.Enabled != false))
                     {
+                        AutoCapNativeDamageSkillEntry selectedSkill = null;
+                        if (_autoCaptureNativeDamageSkillPool.Count > 0)
+                        {
+                            selectedSkill = _autoCaptureNativeDamageSkillPool[_autoCaptureRandom.Next(_autoCaptureNativeDamageSkillPool.Count)];
+                        }
+
                         Color baseTint = PickAutoCaptureHitEffectTint();
                         double alpha = PickAutoCaptureAlpha(_autoCaptureCurrentProfile);
                         Color hitTint = baseTint * (float)alpha;
@@ -1988,16 +2051,36 @@ namespace HaCreator.MapSimulator
                         int hitVariation = PickAutoCaptureHitVariation();
                         int jitterXRange = Math.Max(0, _autoCaptureHitEffectControl?.JitterPxX ?? 48);
                         int jitterYRange = Math.Max(0, _autoCaptureHitEffectControl?.JitterPxY ?? 28);
+                        
+                        SkillData fullSkillData = null;
+                        if (selectedSkill != null && _playerManager?.SkillLoader != null)
+                        {
+                            fullSkillData = _playerManager.SkillLoader.LoadSkill(selectedSkill.SkillId);
+                        }
 
-                        combat.AddHitEffect(
-                            mob.CurrentX + xOffset,
-                            mob.CurrentY - 24 + yOffset,
-                            eventTick,
-                            hitVariation,
-                            _autoCaptureRandom.NextDouble() > 0.5,
-                            hitTint,
-                            hitScale,
-                            hitLifetimeMs);
+                        if (fullSkillData != null && fullSkillData.HitEffect != null)
+                        {
+                            combat.AddSkillHitEffect(
+                                mob.CurrentX + xOffset,
+                                mob.CurrentY - 24 + yOffset,
+                                eventTick,
+                                fullSkillData.HitEffect,
+                                _autoCaptureRandom.NextDouble() > 0.5,
+                                hitTint,
+                                hitScale);
+                        }
+                        else
+                        {
+                            combat.AddHitEffect(
+                                mob.CurrentX + xOffset,
+                                mob.CurrentY - 24 + yOffset,
+                                eventTick,
+                                hitVariation,
+                                _autoCaptureRandom.NextDouble() > 0.5,
+                                hitTint,
+                                hitScale,
+                                hitLifetimeMs);
+                        }
 
                         int extraEffects = PickAutoCaptureExtraLayers();
                         if (_autoCaptureCurrentProfile == AutoCaptureProfile.HitOcclusionHeavy)
@@ -2014,21 +2097,21 @@ namespace HaCreator.MapSimulator
                         }
                         for (int i = 0; i < extraEffects; i++)
                         {
-                            float fx = jitterXRange == 0 ? 0f : (float)((_autoCaptureRandom.NextDouble() - 0.5) * (jitterXRange * 2));
-                            float fy = jitterYRange == 0 ? 0f : (float)((_autoCaptureRandom.NextDouble() - 0.5) * (jitterYRange * 2));
+                            float fx = (float)((_autoCaptureRandom.NextDouble() - 0.5) * (jitterXRange * 2));
+                            float fy = (float)((_autoCaptureRandom.NextDouble() - 0.5) * (jitterYRange * 2));
                             int layerTick = eventTick + _autoCaptureRandom.Next(0, 24);
                             float layerScale = hitScale * (float)(0.90d + (_autoCaptureRandom.NextDouble() * 0.30d));
                             int layerLife = Math.Clamp((int)(hitLifetimeMs * (0.85d + (_autoCaptureRandom.NextDouble() * 0.35d))), 60, 2000);
                             Color layerTint = baseTint * (float)Math.Clamp(alpha * (0.75d + (_autoCaptureRandom.NextDouble() * 0.35d)), 0.05d, 1.0d);
-                            combat.AddHitEffect(
-                                mob.CurrentX + xOffset + fx,
-                                mob.CurrentY - 24 + yOffset + fy,
-                                layerTick,
-                                PickAutoCaptureHitVariation(),
-                                _autoCaptureRandom.NextDouble() > 0.5,
-                                layerTint,
-                                layerScale,
-                                layerLife);
+                            
+                            if (fullSkillData != null && fullSkillData.HitEffect != null && _autoCaptureRandom.NextDouble() > 0.3)
+                            {
+                                combat.AddSkillHitEffect(mob.CurrentX + xOffset + fx, mob.CurrentY - 24 + yOffset + fy, layerTick, fullSkillData.HitEffect, _autoCaptureRandom.NextDouble() > 0.5, layerTint, layerScale);
+                            }
+                            else
+                            {
+                                combat.AddHitEffect(mob.CurrentX + xOffset + fx, mob.CurrentY - 24 + yOffset + fy, layerTick, PickAutoCaptureHitVariation(), _autoCaptureRandom.NextDouble() > 0.5, layerTint, layerScale, layerLife);
+                            }
                         }
                     }
 
@@ -2043,8 +2126,6 @@ namespace HaCreator.MapSimulator
                         eventTick,
                         comboIndex);
                     combat.OnMobDamaged(mob, eventTick);
-                    // combat.RandomizeMobHPBarForDataset(mob.PoolId, _autoCaptureRandom); // Disabled
-
 
                     _autoCaptureDmgLastGlobalTick = eventTick;
                     _autoCaptureDmgLastTickByMob[mob.PoolId] = eventTick;

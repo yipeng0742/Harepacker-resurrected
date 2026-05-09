@@ -13,6 +13,7 @@ using MapleLib.WzLib.WzProperties;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Spine;
+using HaCreator.MapSimulator.Character.Skills;
 
 namespace HaCreator.MapSimulator.Effects
 {
@@ -224,28 +225,43 @@ namespace HaCreator.MapSimulator.Effects
 
         public bool IsComplete { get; private set; }
 
+        public SkillAnimation Animation { get; set; }
+
         public void Update(int currentTime)
         {
             if (IsComplete)
                 return;
 
-            if (Frames == null || Frames.Count == 0)
+            List<SkillFrame> activeFrames = null;
+            if (Animation != null && Animation.Frames != null && Animation.Frames.Count > 0)
             {
-                // Fallback block dataset lifetime (300ms)
+                activeFrames = Animation.Frames;
+            }
+            else if (Frames != null && Frames.Count > 0)
+            {
+                // Fallback to legacy List<IDXObject> frames if needed, but wrap in SkillFrame-like logic
+                // for simplicity we'll just check Frames directly
+            }
+
+            if ((activeFrames == null || activeFrames.Count == 0) && (Frames == null || Frames.Count == 0))
+            {
                 if (currentTime - SpawnTime > LifetimeMs)
                     IsComplete = true;
                 return;
             }
 
-            var frame = Frames[CurrentFrame];
-            int delay = frame?.Delay ?? 100;
+            int totalFrames = activeFrames?.Count ?? Frames.Count;
+            var currentFrameObj = activeFrames != null ? (object)activeFrames[CurrentFrame] : (object)Frames[CurrentFrame];
+            int delay = 100;
+            if (currentFrameObj is SkillFrame sf) delay = sf.Delay;
+            else if (currentFrameObj is IDXObject dx) delay = dx.Delay;
 
             if (currentTime - LastFrameTime >= delay)
             {
                 CurrentFrame++;
                 LastFrameTime = currentTime;
 
-                if (CurrentFrame >= Frames.Count)
+                if (CurrentFrame >= totalFrames)
                 {
                     IsComplete = true;
                 }
@@ -740,6 +756,40 @@ namespace HaCreator.MapSimulator.Effects
                 Tint = tint ?? Color.White,
                 Scale = Math.Clamp(scale, 0.25f, 3.00f),
                 LifetimeMs = Math.Clamp(lifetimeMs, 60, 2000)
+            });
+        }
+
+        /// <summary>
+        /// Add a high-fidelity WZ-based skill hit effect.
+        /// </summary>
+        public void AddSkillHitEffect(
+            float x,
+            float y,
+            int currentTime,
+            SkillAnimation animation,
+            bool flip = false,
+            Color? tint = null,
+            float scale = 1.0f)
+        {
+            if (animation == null) return;
+
+            if (_hitEffects.Count >= MAX_HIT_EFFECTS)
+            {
+                _hitEffects.RemoveAt(0);
+            }
+
+            _hitEffects.Add(new HitEffectDisplay
+            {
+                X = x,
+                Y = y,
+                SpawnTime = currentTime,
+                Animation = animation,
+                CurrentFrame = 0,
+                LastFrameTime = currentTime,
+                Flip = flip,
+                Tint = tint ?? Color.White,
+                Scale = Math.Clamp(scale, 0.25f, 3.00f),
+                LifetimeMs = 5000 // Animation internal frames will determine completion
             });
         }
 
@@ -1628,39 +1678,47 @@ namespace HaCreator.MapSimulator.Effects
         {
             foreach (var effect in _hitEffects)
             {
-                if (effect.Frames == null || effect.Frames.Count == 0)
+                IDXObject drawFrame = null;
+                if (effect.Animation != null && effect.Animation.Frames != null && effect.Animation.Frames.Count > 0)
                 {
-                    // Fallback procedural effects removed per user request
+                    if (effect.CurrentFrame < effect.Animation.Frames.Count)
+                    {
+                        drawFrame = effect.Animation.Frames[effect.CurrentFrame].Texture;
+                    }
+                }
+                else if (effect.Frames != null && effect.Frames.Count > 0)
+                {
+                    if (effect.CurrentFrame < effect.Frames.Count)
+                    {
+                        drawFrame = effect.Frames[effect.CurrentFrame];
+                    }
+                }
+
+                if (drawFrame == null)
+                {
                     continue;
                 }
 
-                if (effect.CurrentFrame >= effect.Frames.Count)
-                    continue;
-
-                var frame = effect.Frames[effect.CurrentFrame];
-                if (frame == null)
-                    continue;
-
                 // Add frame.X and frame.Y which contain the negative origin offset for proper alignment
-                int screenX = (int)effect.X - mapShiftX + centerX + frame.X;
-                int screenY = (int)effect.Y - mapShiftY + centerY + frame.Y;
+                int screenX = (int)effect.X - mapShiftX + centerX + drawFrame.X;
+                int screenY = (int)effect.Y - mapShiftY + centerY + drawFrame.Y;
+                
                 if (Math.Abs(effect.Scale - 1.0f) < 0.01f)
                 {
-                    frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY, effect.Tint, effect.Flip, null);
+                    drawFrame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY, effect.Tint, effect.Flip, null);
                 }
                 else
                 {
-                    // IDXObject has no scaled draw API. For AutoCap augmentation we emulate scale
-                    // by drawing additional offset layers around the base frame.
-                    frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY, effect.Tint, effect.Flip, null);
+                    // Scale emulation logic (remains same for consistency with current augmentation style)
+                    drawFrame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY, effect.Tint, effect.Flip, null);
                     if (effect.Scale > 1.0f)
                     {
                         int offset = Math.Max(1, (int)Math.Round((effect.Scale - 1.0f) * 10.0f));
                         Color layerTint = effect.Tint * 0.55f;
-                        frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX - offset, screenY, layerTint, effect.Flip, null);
-                        frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX + offset, screenY, layerTint, effect.Flip, null);
-                        frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY - offset, layerTint, effect.Flip, null);
-                        frame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY + offset, layerTint, effect.Flip, null);
+                        drawFrame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX - offset, screenY, layerTint, effect.Flip, null);
+                        drawFrame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX + offset, screenY, layerTint, effect.Flip, null);
+                        drawFrame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY - offset, layerTint, effect.Flip, null);
+                        drawFrame.DrawBackground(spriteBatch, skeletonRenderer, null, screenX, screenY + offset, layerTint, effect.Flip, null);
                     }
                 }
             }
