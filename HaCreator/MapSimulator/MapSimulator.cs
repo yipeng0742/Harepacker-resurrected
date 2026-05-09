@@ -261,7 +261,7 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureDmgMobsHitCurrentFrame = 0;
         private int _autoCaptureDmgMobsHitPeakSinceLastLog = 0;
         private readonly List<AutoCapNativeDamageSkillEntry> _autoCaptureNativeDamageSkillPool = new List<AutoCapNativeDamageSkillEntry>();
-        private string _autoCaptureNativeDamageSkillCompareDocPath = null;
+
         private int _autoCaptureHpAttemptedSnapshot = 0;
 
         private sealed class AutoCapNativeDamageSkillEntry
@@ -396,7 +396,7 @@ namespace HaCreator.MapSimulator
         private List<IDXObject> _tombFallFrames; // fall/0..19 animation
         private IDXObject _tombLandFrame; // land/0 (final resting frame)
         private int _tombAnimationStartTime; // When the death occurred
-        private bool _tombAnimationComplete; // Whether fall animation has finished
+
 
         // Tombstone falling physics
         private float _tombCurrentY; // Current Y position during fall
@@ -633,7 +633,7 @@ namespace HaCreator.MapSimulator
         private void BuildAutoCaptureNativeDamageSkillPool()
         {
             _autoCaptureNativeDamageSkillPool.Clear();
-            _autoCaptureNativeDamageSkillCompareDocPath = null;
+
 
             if (!IsAutoCaptureEnabled)
             {
@@ -1767,7 +1767,7 @@ namespace HaCreator.MapSimulator
                     : ((_autoCaptureScanIndex % _autoCaptureScanPath.Count) + 1);
                 int scanTotal = _autoCaptureScanPath?.Count ?? 0;
                 System.Console.WriteLine(
-                    $"[AutoCap][闁插洦鐗辩拠濠冩焽] frame={capturedFrames} scan_idx={scanIdx} scan_total={scanTotal} phase={_autoCaptureCameraPhase} bucket={GetBucketCode(_autoCaptureCurrentBucket)} profile={_autoCaptureCurrentProfile} capture_attempted={capAttemptedDelta} saved={capSavedDelta} skipped_empty={capSkippedEmptyDelta} bucket_attempted=A:{bucketAttemptA},B:{bucketAttemptB},C:{bucketAttemptC},D:{bucketAttemptD} bucket_saved=A:{bucketSavedA},B:{bucketSavedB},C:{bucketSavedC},D:{bucketSavedD} bounds_raw={boundsRawDelta} bounds_usable={boundsUsableDelta} fallback_box_injected={fallbackInjectedDelta} fallback_cap_window={_autoCaptureFallbackDynamicCapCurrent} save_fail={saveFailDelta} save_fail_reason={saveFailReason} save_fail_by_reason={saveFailByReason} save_rate={saveRate:0.000} hp_event_attempted={hpAttemptedDelta} hp_event_fired={hpFiredDelta} hp_event_skipped_cooldown={hpSkippedDelta} hp_active_mobs={_effectManager?.Combat?.ActiveMobHPBars ?? 0} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
+                    $"[AutoCap][采集摘要] frame={capturedFrames} scan_idx={scanIdx} scan_total={scanTotal} phase={_autoCaptureCameraPhase} bucket={GetBucketCode(_autoCaptureCurrentBucket)} profile={_autoCaptureCurrentProfile} capture_attempted={capAttemptedDelta} saved={capSavedDelta} skipped_empty={capSkippedEmptyDelta} bucket_attempted=A:{bucketAttemptA},B:{bucketAttemptB},C:{bucketAttemptC},D:{bucketAttemptD} bucket_saved=A:{bucketSavedA},B:{bucketSavedB},C:{bucketSavedC},D:{bucketSavedD} bounds_raw={boundsRawDelta} bounds_usable={boundsUsableDelta} fallback_box_injected={fallbackInjectedDelta} fallback_cap_window={_autoCaptureFallbackDynamicCapCurrent} save_fail={saveFailDelta} save_fail_reason={saveFailReason} save_fail_by_reason={saveFailByReason} save_rate={saveRate:0.000} hp_event_attempted={hpAttemptedDelta} hp_event_fired={hpFiredDelta} hp_event_skipped_cooldown={hpSkippedDelta} hp_active_mobs={_effectManager?.Combat?.ActiveMobHPBars ?? 0} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
             }
             var combat = _effectManager?.Combat;
             var forceStateMobs = new List<MobItem>();
@@ -2671,10 +2671,7 @@ namespace HaCreator.MapSimulator
         private DebugDrawData[] _debugNpcData;
         private DebugDrawData[] _debugPortalData;
         private DebugDrawData[] _debugReactorData;
-        private int _debugMobCount;
-        private int _debugNpcCount;
-        private int _debugPortalCount;
-        private int _debugReactorCount;
+
 
         // Cached StringBuilder for debug text to avoid GC allocations every frame
         private readonly StringBuilder _debugStringBuilder = new StringBuilder(256);
@@ -7132,7 +7129,7 @@ namespace HaCreator.MapSimulator
 
                         if (!bucketTuning.SuppressMobLabels && _mobPool != null)
                         {
-                            // dead 濡楀棔缍嗘０鎴滅箽閻ｆ瑱绱版禒鍛躬 death 濡楋絽鍟撻崗銉礉娑撴柨宕熺敮褎娓舵径?1 娑擃亗鈧?
+                            // 随机注入死亡标签以增强样本 diversity (仅在 DeathHeavy 模式下)
                             if (_autoCaptureCurrentProfile == AutoCaptureProfile.DeathHeavy &&
                                 _autoCaptureRandom.NextDouble() < _autoCaptureCaptureGuardControl.DeathLabelProbInDeathProfile)
                             {
@@ -7178,7 +7175,7 @@ namespace HaCreator.MapSimulator
 
                         // Get HP bars bounds removed per refactoring (labels/0.txt no longer contains class 2).
 
-                    // 鐎硅姤婢楅梻銊﹀付閿涙艾褰х捄瀹犵箖鐎瑰苯鍙忛弮鐘垫窗閺嶅洤鎶氶敍宀勪缉閸忓秹鏆遍弮鍫曟？閳ユ粍妫ゆ穱婵嗙摠閳ユ繂宕卞姹団偓?
+                        // 根据采集策略计算当前帧是否包含有效目标，若无目标则尝试注入或跳过当前帧采集
                         _autoCaptureCaptureAttempted++;
                         IncrementBucketCount(_autoCaptureBucketAttempted, _autoCaptureCurrentBucket);
                         if (IsAutoCaptureEnabled)
@@ -7281,7 +7278,7 @@ namespace HaCreator.MapSimulator
                                 if (_autoCaptureConsecutiveSaveFailures >= Math.Max(1, _autoCaptureCaptureGuardControl.MaxConsecutiveCaptureFailuresPerMap))
                                 {
                                     throw new InvalidOperationException(
-                                        $"AutoCap缁傝鐫嗘穱婵嗙摠鏉╃偟鐢绘径杈Е鐡掑懘妲囬崐? consecutive={_autoCaptureConsecutiveSaveFailures}, limit={_autoCaptureCaptureGuardControl.MaxConsecutiveCaptureFailuresPerMap}, reason={saveFailReason}");
+                                        $"AutoCap 采集保存连续失败次数过多，请检查磁盘空间或路径权限。 consecutive={_autoCaptureConsecutiveSaveFailures}, limit={_autoCaptureCaptureGuardControl.MaxConsecutiveCaptureFailuresPerMap}, reason={saveFailReason}");
                                 }
                             }
                             TryReportThroughputLow(TickCount);
@@ -7311,11 +7308,11 @@ namespace HaCreator.MapSimulator
                             {
                                 if (_autoCapturePointAdvanceLogSuppressed > 0)
                                 {
-                                    System.Console.WriteLine($"[AutoCap] 閸楁洜鍋ｆ０鍕暬閼版鏁栭敍灞惧腹鏉╂稐绗呮稉鈧稉顏呭閹诲繒鍋? point_attempts={_autoCaptureScanPointAttemptCount} suppressed={_autoCapturePointAdvanceLogSuppressed}");
+                                    System.Console.WriteLine($"[AutoCap] 在该点尝试次数过多，自动跳过并进入下一点。 point_attempts={_autoCaptureScanPointAttemptCount} suppressed={_autoCapturePointAdvanceLogSuppressed}");
                                 }
                                 else
                                 {
-                                    System.Console.WriteLine($"[AutoCap] 閸楁洜鍋ｆ０鍕暬閼版鏁栭敍灞惧腹鏉╂稐绗呮稉鈧稉顏呭閹诲繒鍋? point_attempts={_autoCaptureScanPointAttemptCount}");
+                                    System.Console.WriteLine($"[AutoCap] 在该点尝试次数过多，自动跳过并进入下一点。 point_attempts={_autoCaptureScanPointAttemptCount}");
                                 }
                                 _autoCapturePointAdvanceLogSuppressed = 0;
                                 _autoCapturePointAdvanceLogLastTick = now;
@@ -7445,7 +7442,7 @@ namespace HaCreator.MapSimulator
             _autoCaptureScanIndex = 0;
             _autoCapturePostWarmupRepathDone = true;
             System.Console.WriteLine(
-                $"[AutoCap] warmup鐎瑰本鍨氶崥搴ㄥ櫢瀵ょ儤澹傞幓蹇氱熅瀵? scan_points={_autoCaptureScanPath?.Count ?? 0}");
+                $"[AutoCap] warmup 结束，已重新构建扫描路径。 scan_points={_autoCaptureScanPath?.Count ?? 0}");
         }
 
         private void RegisterCaptureSaved(int tick)
@@ -7556,12 +7553,12 @@ namespace HaCreator.MapSimulator
             if (savedLast5m >= floor)
             {
                 System.Console.WriteLine(
-                    $"[AutoCap][閸氱偛鎮欑粣妤€褰沒 saved_last_5m={savedLast5m} floor={floor} status=OK");
+                    $"[AutoCap][吞吐量状态] saved_last_5m={savedLast5m} floor={floor} status=OK");
                 return;
             }
 
             System.Console.WriteLine(
-                $"[AutoCap][閸氱偛鎮欓崨濠咁劅] saved_last_5m={savedLast5m} floor={floor} capture_attempted={_autoCaptureCaptureAttempted} capture_saved={_autoCaptureCaptureSaved} capture_skipped_empty={_autoCaptureCaptureSkippedEmpty} save_fail={_autoCaptureSaveFailCount} save_fail_reason={_datasetGenerator?.LastSaveFailureReason ?? "none"}");
+                $"[AutoCap][吞吐量过低] saved_last_5m={savedLast5m} floor={floor} capture_attempted={_autoCaptureCaptureAttempted} capture_saved={_autoCaptureCaptureSaved} capture_skipped_empty={_autoCaptureCaptureSkippedEmpty} save_fail={_autoCaptureSaveFailCount} save_fail_reason={_datasetGenerator?.LastSaveFailureReason ?? "none"}");
         }
 
         private int GetDynamicFallbackInjectCapPerWindow(int tick)
@@ -7849,7 +7846,7 @@ namespace HaCreator.MapSimulator
                 if (!_tombHasLanded && _tombAnimationStartTime == 0)
                 {
                     _tombAnimationStartTime = Environment.TickCount;
-                    _tombAnimationComplete = false;
+
 
                     // Find the actual ground position below the death location
                     float groundY = player.DeathY;
@@ -7895,7 +7892,7 @@ namespace HaCreator.MapSimulator
             {
                 // Reset tombstone state when player is alive (respawned)
                 _tombAnimationStartTime = 0;
-                _tombAnimationComplete = false;
+
                 _tombHasLanded = false;
                 _tombVelocityY = 0;
             }
@@ -7941,7 +7938,7 @@ namespace HaCreator.MapSimulator
                 {
                     _tombCurrentY = _tombTargetY;
                     _tombHasLanded = true;
-                    _tombAnimationComplete = true; // Switch to land frame when hitting ground
+
                 }
             }
 
