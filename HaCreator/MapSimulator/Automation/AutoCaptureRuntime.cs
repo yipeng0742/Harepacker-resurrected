@@ -40,6 +40,7 @@ namespace HaCreator.MapSimulator.Automation
         public int MapId { get; set; }
         public string ResolutionName { get; set; }
         public string OutputDir { get; set; }
+        public string OutputRootDir { get; set; }
         public int StepX { get; set; } = 96;
         public int StepY { get; set; } = 96;
         public int TargetFrames { get; set; } = 120;
@@ -58,6 +59,10 @@ namespace HaCreator.MapSimulator.Automation
             AutoCaptureDamageNumberControl.CreateDefault();
         public AutoCaptureHitEffectControl HitEffectControl { get; set; } =
             AutoCaptureHitEffectControl.CreateDefault();
+        public AutoCaptureRealSkillEffectControl RealSkillEffect { get; set; } =
+            AutoCaptureRealSkillEffectControl.CreateDefault();
+        public AutoCaptureCameraLockControl CameraLock { get; set; } =
+            AutoCaptureCameraLockControl.CreateDefault();
         public AutoCaptureCaptureGuardControl CaptureGuard { get; set; } =
             AutoCaptureCaptureGuardControl.CreateDefault();
         public AutoCaptureBucketMix BucketMix { get; set; } =
@@ -111,6 +116,16 @@ namespace HaCreator.MapSimulator.Automation
         public AutoCaptureHitEffectControl GetNormalizedHitEffectControl()
         {
             return (HitEffectControl ?? AutoCaptureHitEffectControl.CreateDefault()).Normalize();
+        }
+
+        public AutoCaptureRealSkillEffectControl GetNormalizedRealSkillEffectControl()
+        {
+            return (RealSkillEffect ?? AutoCaptureRealSkillEffectControl.CreateDefault()).Normalize();
+        }
+
+        public AutoCaptureCameraLockControl GetNormalizedCameraLockControl()
+        {
+            return (CameraLock ?? AutoCaptureCameraLockControl.CreateDefault()).Normalize();
         }
 
         public AutoCaptureCaptureGuardControl GetNormalizedCaptureGuard()
@@ -454,6 +469,82 @@ namespace HaCreator.MapSimulator.Automation
             }
             normalized.VariationPool = normalized.VariationPool.Distinct().ToList();
             return normalized;
+        }
+    }
+
+    internal sealed class AutoCaptureRealSkillEffectControl
+    {
+        public bool Enabled { get; set; } = true;
+        public string Source { get; set; } = "all_skills";
+        public string Kind { get; set; } = "hit_only";
+        public string Fallback { get; set; } = "skip";
+
+        public static AutoCaptureRealSkillEffectControl CreateDefault()
+        {
+            return new AutoCaptureRealSkillEffectControl();
+        }
+
+        public AutoCaptureRealSkillEffectControl Normalize()
+        {
+            string source = string.IsNullOrWhiteSpace(Source)
+                ? "all_skills"
+                : Source.Trim().ToLowerInvariant();
+            if (!string.Equals(source, "all_skills", StringComparison.Ordinal))
+            {
+                source = "all_skills";
+            }
+
+            string kind = string.IsNullOrWhiteSpace(Kind)
+                ? "hit_only"
+                : Kind.Trim().ToLowerInvariant();
+            if (!string.Equals(kind, "hit_only", StringComparison.Ordinal))
+            {
+                kind = "hit_only";
+            }
+
+            string fallback = string.IsNullOrWhiteSpace(Fallback)
+                ? "skip"
+                : Fallback.Trim().ToLowerInvariant();
+            if (!string.Equals(fallback, "skip", StringComparison.Ordinal))
+            {
+                fallback = "skip";
+            }
+
+            return new AutoCaptureRealSkillEffectControl
+            {
+                Enabled = Enabled,
+                Source = source,
+                Kind = kind,
+                Fallback = fallback
+            };
+        }
+    }
+
+    internal sealed class AutoCaptureCameraLockControl
+    {
+        public bool Enabled { get; set; } = false;
+        public string Anchor { get; set; } = "first_scan_point";
+
+        public static AutoCaptureCameraLockControl CreateDefault()
+        {
+            return new AutoCaptureCameraLockControl();
+        }
+
+        public AutoCaptureCameraLockControl Normalize()
+        {
+            string anchor = string.IsNullOrWhiteSpace(Anchor)
+                ? "first_scan_point"
+                : Anchor.Trim().ToLowerInvariant();
+            if (!string.Equals(anchor, "first_scan_point", StringComparison.Ordinal))
+            {
+                anchor = "first_scan_point";
+            }
+
+            return new AutoCaptureCameraLockControl
+            {
+                Enabled = Enabled,
+                Anchor = anchor
+            };
         }
     }
 

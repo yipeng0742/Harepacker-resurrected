@@ -28,6 +28,8 @@ namespace HaCreator.MapSimulator.Automation
             public HpBarControl hp_bar_control { get; set; } = new HpBarControl();
             public DamageNumberControl damage_number_control { get; set; } = new DamageNumberControl();
             public HitEffectControl hit_effect_control { get; set; } = new HitEffectControl();
+            public RealSkillEffectControl real_skill_effect { get; set; } = new RealSkillEffectControl();
+            public CameraLockControl camera_lock { get; set; } = new CameraLockControl();
             public CaptureGuard capture_guard { get; set; } = new CaptureGuard();
             public int seed { get; set; } = 20260505;
             public int target_frames { get; set; } = 180;
@@ -146,6 +148,20 @@ namespace HaCreator.MapSimulator.Automation
             public int max_consecutive_capture_failures_per_map { get; set; } = 24;
         }
 
+        private sealed class RealSkillEffectControl
+        {
+            public bool enabled { get; set; } = true;
+            public string source { get; set; } = "all_skills";
+            public string kind { get; set; } = "hit_only";
+            public string fallback { get; set; } = "skip";
+        }
+
+        private sealed class CameraLockControl
+        {
+            public bool enabled { get; set; } = false;
+            public string anchor { get; set; } = "first_scan_point";
+        }
+
         private sealed class WriterControl
         {
             public int threads { get; set; } = 8;
@@ -239,6 +255,8 @@ namespace HaCreator.MapSimulator.Automation
                 AutoCaptureHpBarControl hpBarControl = BuildHpBarControl(job.hp_bar_control);
                 AutoCaptureDamageNumberControl damageControl = BuildDamageNumberControl(job.damage_number_control);
                 AutoCaptureHitEffectControl hitEffectControl = BuildHitEffectControl(job.hit_effect_control);
+                AutoCaptureRealSkillEffectControl realSkillEffectControl = BuildRealSkillEffectControl(job.real_skill_effect);
+                AutoCaptureCameraLockControl cameraLockControl = BuildCameraLockControl(job.camera_lock);
                 AutoCaptureCaptureGuardControl captureGuard = BuildCaptureGuard(job.capture_guard);
                 Console.WriteLine($"  hp_bar_ctrl  : global_cd={hpBarControl.HpEventGlobalCooldownMs}ms, per_mob_cd={hpBarControl.HpEventPerMobCooldownMs}ms, per_frame={hpBarControl.MaxHpEventsPerCaptureFrame}, active_mobs={hpBarControl.MaxHpActiveMobs}");
                 Console.WriteLine($"                 probs(normal/attack/hit/death)={hpBarControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
@@ -246,6 +264,8 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"                 probs(normal/attack/hit/death)={damageControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{damageControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
                 Console.WriteLine($"                 template_style={damageControl.TemplateStyle}, template_weights=single:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Single, 0)},double_tap:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.DoubleTap, 0)},rapid_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.RapidCombo, 0)},stagger_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.StaggerCombo, 0)},finisher:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Finisher, 0)}");
                 Console.WriteLine($"  hit_effect_ctrl: enabled={hitEffectControl.Enabled}, palette={hitEffectControl.PaletteMode}, alpha={hitEffectControl.AlphaMin:0.##}-{hitEffectControl.AlphaMax:0.##}, scale={hitEffectControl.ScaleMin:0.##}-{hitEffectControl.ScaleMax:0.##}, lifetime={hitEffectControl.LifetimeMsMin}-{hitEffectControl.LifetimeMsMax}ms, layers={hitEffectControl.ExtraLayersMin}-{hitEffectControl.ExtraLayersMax}, jitter={hitEffectControl.JitterPxX}x{hitEffectControl.JitterPxY}, variations=[{string.Join(",", hitEffectControl.VariationPool)}]");
+                Console.WriteLine($"  real_skill_fx : enabled={realSkillEffectControl.Enabled}, source={realSkillEffectControl.Source}, kind={realSkillEffectControl.Kind}, fallback={realSkillEffectControl.Fallback}");
+                Console.WriteLine($"  camera_lock   : enabled={cameraLockControl.Enabled}, anchor={cameraLockControl.Anchor}");
                 Console.WriteLine($"  capture_guard: throughput_floor_per_10m={captureGuard.ThroughputFloorPer10Minutes}, throughput_floor_per_5m={captureGuard.ThroughputFloorPer5Minutes}, hp_label_cap_per_frame={captureGuard.HpLabelCapPerFrame}, hp_unpaired_fallback_prob={captureGuard.HpUnpairedFallbackProb:0.###}, death_label_prob_in_death_profile={captureGuard.DeathLabelProbInDeathProfile:0.###}, point_max_attempts={captureGuard.PointMaxAttempts}, offscreen_recover_backoff_ms=[{string.Join(",", captureGuard.OffscreenRecoverBackoffMs)}], max_consecutive_capture_failures_per_map={captureGuard.MaxConsecutiveCaptureFailuresPerMap}");
                 var writer = job.writer ?? new WriterControl();
                 int writerThreads = Math.Max(1, writer.threads);
@@ -311,6 +331,7 @@ namespace HaCreator.MapSimulator.Automation
                                 MapId = mapId,
                                 ResolutionName = resolutionName,
                                 OutputDir = mapOutDir,
+                                OutputRootDir = jobDir,
                                 StepX = Math.Max(16, job.scan_step_px?.x ?? 96),
                                 StepY = Math.Max(16, job.scan_step_px?.y ?? 96),
                                 TargetFrames = Math.Max(1, job.target_frames),
@@ -327,6 +348,8 @@ namespace HaCreator.MapSimulator.Automation
                                 HpBarControl = hpBarControl,
                                 DamageNumberControl = damageControl,
                                 HitEffectControl = hitEffectControl,
+                                RealSkillEffect = realSkillEffectControl,
+                                CameraLock = cameraLockControl,
                                 CaptureGuard = captureGuard
                             };
 
@@ -765,6 +788,28 @@ namespace HaCreator.MapSimulator.Automation
                 PointMaxAttempts = Math.Clamp(guard.point_max_attempts, 1, 200),
                 OffscreenRecoverBackoffMs = guard.offscreen_recover_backoff_ms ?? new[] { 100, 300, 500 },
                 MaxConsecutiveCaptureFailuresPerMap = Math.Clamp(guard.max_consecutive_capture_failures_per_map, 1, 10000)
+            }.Normalize();
+        }
+
+        private static AutoCaptureRealSkillEffectControl BuildRealSkillEffectControl(RealSkillEffectControl control)
+        {
+            control ??= new RealSkillEffectControl();
+            return new AutoCaptureRealSkillEffectControl
+            {
+                Enabled = control.enabled,
+                Source = control.source,
+                Kind = control.kind,
+                Fallback = control.fallback
+            }.Normalize();
+        }
+
+        private static AutoCaptureCameraLockControl BuildCameraLockControl(CameraLockControl control)
+        {
+            control ??= new CameraLockControl();
+            return new AutoCaptureCameraLockControl
+            {
+                Enabled = control.enabled,
+                Anchor = control.anchor
             }.Normalize();
         }
     }

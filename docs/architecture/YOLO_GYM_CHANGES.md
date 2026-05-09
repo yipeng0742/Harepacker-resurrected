@@ -340,3 +340,7 @@ val: images/val
 - **无头渲染（Headless）**：探索将 MonoGame 切换为 Offscreen RenderTarget，在无显示器的服务器上运行数据集生成。
 - **YOLO 类别扩展**：添加 NPC（class 2）、Drop 掉落物（class 3）等类别，扩充数据集覆盖范围。
 - **TensorBoard 监控**：训练脚本（`train_ppo_nav.py`）已集成 SB3 logger，观察 `ep_rew_mean` 趋势评估 Agent 学习效果。
+---
+
+## 更新说明（2026-05）
+- AutoCap 重构后的操作口径请参考：`docs/architecture/MAPSIMULATOR_AUTOCAP_RUNBOOK_2026-05.md`

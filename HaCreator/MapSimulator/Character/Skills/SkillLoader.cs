@@ -619,6 +619,86 @@ namespace HaCreator.MapSimulator.Character.Skills
             return result;
         }
 
+        /// <summary>
+        /// Load all skills from Skill.wz (cross-job pool), de-duplicated by skill ID.
+        /// </summary>
+        public List<SkillData> LoadAllSkills()
+        {
+            var result = new List<SkillData>();
+            var seen = new HashSet<int>();
+            if (_skillWz?.WzDirectory == null)
+            {
+                return result;
+            }
+
+            foreach (var img in EnumerateSkillImages(_skillWz.WzDirectory))
+            {
+                if (img == null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    img.ParseImage();
+                }
+                catch
+                {
+                    continue;
+                }
+
+                var skillNode = img["skill"];
+                if (skillNode == null)
+                {
+                    continue;
+                }
+
+                foreach (var child in skillNode.WzProperties)
+                {
+                    if (!int.TryParse(child.Name, out int skillId))
+                    {
+                        continue;
+                    }
+                    if (!seen.Add(skillId))
+                    {
+                        continue;
+                    }
+
+                    var skill = LoadSkill(skillId);
+                    if (skill != null)
+                    {
+                        result.Add(skill);
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private static IEnumerable<WzImage> EnumerateSkillImages(WzDirectory root)
+        {
+            if (root == null)
+            {
+                yield break;
+            }
+
+            foreach (WzImage img in root.WzImages)
+            {
+                if (img != null)
+                {
+                    yield return img;
+                }
+            }
+
+            foreach (WzDirectory dir in root.WzDirectories)
+            {
+                foreach (var img in EnumerateSkillImages(dir))
+                {
+                    yield return img;
+                }
+            }
+        }
+
         private static IReadOnlyList<int> GetSkillBookJobIdsForJob(int jobId)
         {
             return jobId switch

@@ -1363,35 +1363,7 @@ namespace HaCreator.MapSimulator.Effects
         /// </summary>
         public void DrawBossHPBar(SpriteBatch spriteBatch)
         {
-            if (!_initialized)
-                return;
-
-            // Use WZ-based boss HP bar UI if available
-            if (_useWzBossHPBar && _bossHPBarUI != null && _bossHPBarUI.HasActiveBossBars)
-            {
-                _bossHPBarUI.Draw(spriteBatch);
-                return;
-            }
-
-            // Fall back to basic rendering
-            if (_bossHPBars.Count == 0)
-                return;
-
-            int screenWidth = spriteBatch.GraphicsDevice.Viewport.Width;
-            int yOffset = BossHPBarDisplay.BAR_Y_OFFSET;
-
-            foreach (var bossBar in _bossHPBars)
-            {
-                if (!bossBar.IsVisible)
-                    continue;
-
-                // Skip HP bars for dead/removed bosses
-                if (bossBar.Boss?.AI != null && bossBar.Boss.AI.IsDead)
-                    continue;
-
-                DrawSingleBossHPBar(spriteBatch, bossBar, screenWidth, yOffset);
-                yOffset += BossHPBarDisplay.BAR_HEIGHT + 30; // Stack multiple boss bars
-            }
+            // Boss HP bar rendering disabled for AutoCapture refactoring.
         }
 
         /// <summary>
@@ -1494,34 +1466,9 @@ namespace HaCreator.MapSimulator.Effects
             }
         }
 
-        /// <summary>
-        /// Draw regular mob HP bars above damaged mobs
-        /// </summary>
         private void DrawMobHPBars(SpriteBatch spriteBatch, int mapShiftX, int mapShiftY, int centerX, int centerY)
         {
-            foreach (var kvp in _mobHPBars)
-            {
-                var hpBar = kvp.Value;
-                var mob = hpBar.Mob;
-
-                if (!hpBar.IsVisible || mob == null || mob.MovementInfo == null)
-                    continue;
-
-                // Skip HP bars for dead/removed mobs
-                if (mob.AI != null && mob.AI.IsDead)
-                    continue;
-
-                // Get mob position
-                float mobX = mob.MovementInfo.X;
-                float mobY = mob.MovementInfo.Y;
-
-                // Convert to screen coordinates
-                int screenX = (int)mobX - mapShiftX + centerX;
-                int screenY = (int)mobY - mapShiftY + centerY;
-
-                // Draw HP bar above mob
-                DrawSingleMobHPBar(spriteBatch, hpBar, screenX, screenY);
-            }
+            // HP bar rendering disabled for AutoCapture refactoring.
         }
 
         /// <summary>
@@ -1683,18 +1630,7 @@ namespace HaCreator.MapSimulator.Effects
             {
                 if (effect.Frames == null || effect.Frames.Count == 0)
                 {
-                    // Fallback dataset occlusion block (Procedural Skill Explosion)
-                    if (_glowTexture != null)
-                    {
-                        int fallbackX = (int)effect.X - mapShiftX + centerX;
-                        int fallbackY = (int)effect.Y - mapShiftY + centerY;
-
-                        int fallbackSize = Math.Max(24, (int)Math.Round(128 * effect.Scale));
-                        int half = fallbackSize / 2;
-                        Rectangle destRect = new Rectangle(fallbackX - half, fallbackY - half, fallbackSize, fallbackSize);
-
-                        spriteBatch.Draw(_glowTexture, destRect, effect.Tint);
-                    }
+                    // Fallback procedural effects removed per user request
                     continue;
                 }
 
