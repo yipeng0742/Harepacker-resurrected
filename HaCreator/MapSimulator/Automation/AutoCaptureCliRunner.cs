@@ -331,7 +331,7 @@ namespace HaCreator.MapSimulator.Automation
                                 MapId = mapId,
                                 ResolutionName = resolutionName,
                                 OutputDir = mapOutDir,
-                                OutputRootDir = jobDir,
+                                OutputRootDir = outputRoot,
                                 StepX = Math.Max(16, job.scan_step_px?.x ?? 96),
                                 StepY = Math.Max(16, job.scan_step_px?.y ?? 96),
                                 TargetFrames = Math.Max(1, job.target_frames),

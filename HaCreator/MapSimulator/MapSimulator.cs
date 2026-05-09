@@ -632,6 +632,7 @@ namespace HaCreator.MapSimulator
 
         private void BuildAutoCaptureNativeDamageSkillPool()
         {
+            System.Console.WriteLine("[AutoCap] Building native damage skill pool...");
             _autoCaptureNativeDamageSkillPool.Clear();
 
 
@@ -718,16 +719,27 @@ namespace HaCreator.MapSimulator
                     manifestLines.Add($"| {entry.SkillId} | {skillName} | {entry.Job} | Yes |");
                 }
 
+                if (!string.IsNullOrEmpty(_autoCaptureOptions.OutputRootDir))
+                {
+                    string rootManifestPath = Path.Combine(_autoCaptureOptions.OutputRootDir, "AutoCapSkillManifest.md");
+                    Directory.CreateDirectory(_autoCaptureOptions.OutputRootDir);
+                    System.IO.File.WriteAllText(rootManifestPath, string.Join(Environment.NewLine, manifestLines), Encoding.UTF8);
+                    System.Console.WriteLine($"[AutoCap] Skill manifest exported to root: {rootManifestPath}");
+                }
+                
+                // Always also export to specific output dir if it exists, for backward compatibility/redundancy
                 if (!string.IsNullOrEmpty(_autoCaptureOptions.OutputDir))
                 {
                     string manifestPath = Path.Combine(_autoCaptureOptions.OutputDir, "AutoCapSkillManifest.md");
-                    System.IO.File.WriteAllLines(manifestPath, manifestLines);
+                    Directory.CreateDirectory(_autoCaptureOptions.OutputDir);
+                    System.IO.File.WriteAllText(manifestPath, string.Join(Environment.NewLine, manifestLines), Encoding.UTF8);
                     System.Console.WriteLine($"[AutoCap] Skill manifest exported to: {manifestPath}");
                 }
             }
             catch (Exception ex)
             {
                 System.Console.WriteLine($"[AutoCap] Failed to export skill manifest: {ex.Message}");
+                System.Console.WriteLine(ex.StackTrace);
             }
         }
 
