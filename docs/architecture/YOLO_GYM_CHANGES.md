@@ -47,6 +47,11 @@
 
 YOLO 标注数据生成器，从 MapSimulator 实时帧中抓取屏幕截图并写出 `.txt` 标签文件。
 
+> 口径说明（2026-05）：
+> 本节描述的是早期 Gym/YOLO 实验链路。
+> 当前离线 AutoCap 的正式操作口径，已经切换到单路径固定网格方案，请以 `docs/architecture/MAPSIMULATOR_AUTOCAP_RUNBOOK_2026-05.md` 为准。
+> 下文中涉及旧三类标签、F4 手动采集、`YOLODataset/data.yaml` 的描述，均不代表当前 AutoCap 主链路。
+
 #### 关键方法
 
 | 方法 | 说明 |
@@ -71,8 +76,8 @@ YOLO 标注数据生成器，从 MapSimulator 实时帧中抓取屏幕截图并�
 #### 类别 ID
 | ID | 含义 |
 |---|---|
-| 0 | 怪物 Mob（来自 `MobItem.GetScreenBounds`） |
-| 1 | 怪物 HP 条（来自 `CombatEffects.GetActiveHPBarBounds`） |
+| 0 | 历史实验标签：怪物 Mob（旧链路） |
+| 1 | 历史实验标签：怪物 HP 条（旧链路） |
 
 ---
 
@@ -285,6 +290,11 @@ public Color? CustomHpColor;
 
 ## 6. YOLO 数据集生成流程
 
+> 说明：
+> 本节保留的是早期 F4 手动采集流程。
+> 当前 AutoCap 已改为 `job.json + run_autocap.ps1` 的离线任务模式，且标签契约固定为 `mob_dead / mob_active` 两类。
+> 当前执行方式、相机路径、失败语义，请直接参考 `docs/architecture/MAPSIMULATOR_AUTOCAP_RUNBOOK_2026-05.md`。
+
 ### 触发方式
 1. 在 MapSimulator 中打开目标地图
 2. 按 **F4** 开始/停止采集
@@ -300,6 +310,7 @@ public Color? CustomHpColor;
 
 ### 标签格式
 ```
+# 以下为历史 Gym/YOLO 实验标签示例，不是当前 AutoCap 契约
 # <class_id> <cx_norm> <cy_norm> <w_norm> <h_norm>
 0 0.512345 0.423456 0.089012 0.156789   # Mob
 1 0.512345 0.321234 0.078900 0.023400   # HP 条
@@ -307,10 +318,11 @@ public Color? CustomHpColor;
 
 ### 与 Python 训练对接
 ```yaml
+# 以下为历史 Gym/YOLO 实验 data.yaml 示例，不是当前 AutoCap 产物定义
 # YOLODataset/data.yaml（自动生成）
 path: .
 nc: 2
-names: ['mob', 'hp_bar']
+names: ['mob_dead', 'mob_active']
 train: images/train
 val: images/val
 ```
@@ -343,4 +355,5 @@ val: images/val
 ---
 
 ## 更新说明（2026-05）
-- AutoCap 重构后的操作口径请参考：`docs/architecture/MAPSIMULATOR_AUTOCAP_RUNBOOK_2026-05.md`
+- AutoCap 当前正式操作口径请参考：`docs/architecture/MAPSIMULATOR_AUTOCAP_RUNBOOK_2026-05.md`
+- 本文档中的 Gym/YOLO F4 手工采集描述仅作为历史架构背景，不应替代当前 AutoCap 运行说明

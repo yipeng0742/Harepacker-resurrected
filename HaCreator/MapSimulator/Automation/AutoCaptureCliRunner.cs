@@ -25,11 +25,9 @@ namespace HaCreator.MapSimulator.Automation
             public CaptureProfileMix capture_profile_mix { get; set; } = new CaptureProfileMix();
             public BucketMix bucket_mix { get; set; } = new BucketMix();
             public BucketPolicy bucket_policy { get; set; } = new BucketPolicy();
-            public HpBarControl hp_bar_control { get; set; } = new HpBarControl();
             public DamageNumberControl damage_number_control { get; set; } = new DamageNumberControl();
             public HitEffectControl hit_effect_control { get; set; } = new HitEffectControl();
             public RealSkillEffectControl real_skill_effect { get; set; } = new RealSkillEffectControl();
-            public CaptureGuard capture_guard { get; set; } = new CaptureGuard();
             public int seed { get; set; } = 20260505;
             public bool mute_audio { get; set; } = true;
             public WriterControl writer { get; set; } = new WriterControl();
@@ -69,23 +67,6 @@ namespace HaCreator.MapSimulator.Automation
             public double stand_move_damage_lag_prob { get; set; } = 0.03d;
             public double hit_damage_min_prob { get; set; } = 0.90d;
             public string global_ratio_scope { get; set; } = "global";
-        }
-
-        private sealed class HpBarControl
-        {
-            public int hp_event_global_cooldown_ms { get; set; } = 180;
-            public int hp_event_per_mob_cooldown_ms { get; set; } = 650;
-            public int max_hp_events_per_capture_frame { get; set; } = 6;
-            public int max_hp_active_mobs { get; set; } = 6;
-            public HpEventProbByProfile hp_event_prob_by_profile { get; set; } = new HpEventProbByProfile();
-        }
-
-        private sealed class HpEventProbByProfile
-        {
-            public double normal { get; set; } = 0.10d;
-            public double attack { get; set; } = 0.18d;
-            public double hit { get; set; } = 0.28d;
-            public double death { get; set; } = 0.06d;
         }
 
         private sealed class DamageNumberControl
@@ -138,23 +119,11 @@ namespace HaCreator.MapSimulator.Automation
             public int y { get; set; } = 28;
         }
 
-        private sealed class CaptureGuard
-        {
-            public int throughput_floor_per_10m { get; set; } = 120;
-            public int throughput_floor_per_5m { get; set; } = 100;
-            public int hp_label_cap_per_frame { get; set; } = 1;
-            public double hp_unpaired_fallback_prob { get; set; } = 0.02d;
-            public double death_label_prob_in_death_profile { get; set; } = 0.25d;
-            public int[] offscreen_recover_backoff_ms { get; set; } = new[] { 100, 300, 500 };
-            public int max_consecutive_capture_failures_per_map { get; set; } = 24;
-        }
-
         private sealed class RealSkillEffectControl
         {
             public bool enabled { get; set; } = true;
             public string source { get; set; } = "all_skills";
             public string kind { get; set; } = "hit_only";
-            public string fallback { get; set; } = "skip";
         }
 
         private sealed class WriterControl
@@ -249,20 +218,16 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"  bucket_mix   : clean_baseline={bucketMix.CleanBaseline}, anchor_decoupling={bucketMix.AnchorDecoupling}, chaos_occlusion={bucketMix.ChaosOcclusion}, pure_noise={bucketMix.PureNoise}");
                 Console.WriteLine($"  bucket_policy: enforce_dead_mutual_exclusion={bucketPolicy.EnforceDeadMutualExclusion}, stand_move_damage_lag_prob={bucketPolicy.StandMoveDamageLagProb:0.###}, hit_damage_min_prob={bucketPolicy.HitDamageMinProb:0.###}, global_ratio_scope={bucketPolicy.GlobalRatioScope}");
                 AutoCaptureCameraPlan cameraPlan = BuildCameraPlan(job.camera_plan);
-                AutoCaptureHpBarControl hpBarControl = BuildHpBarControl(job.hp_bar_control);
                 AutoCaptureDamageNumberControl damageControl = BuildDamageNumberControl(job.damage_number_control);
                 AutoCaptureHitEffectControl hitEffectControl = BuildHitEffectControl(job.hit_effect_control);
                 AutoCaptureRealSkillEffectControl realSkillEffectControl = BuildRealSkillEffectControl(job.real_skill_effect);
-                AutoCaptureCaptureGuardControl captureGuard = BuildCaptureGuard(job.capture_guard);
                 Console.WriteLine($"  camera_plan  : mode={cameraPlan.Mode}, overlap={cameraPlan.GridOverlapRatioX:0.###}/{cameraPlan.GridOverlapRatioY:0.###}, start={cameraPlan.StartCorner}, traversal={cameraPlan.Traversal}, warmup_frames={cameraPlan.StartupWarmupFrames}, settle_frames={cameraPlan.SettleFrames}, sample_frames_per_point={cameraPlan.SampleFramesPerPoint}");
-                Console.WriteLine($"  hp_bar_ctrl  : global_cd={hpBarControl.HpEventGlobalCooldownMs}ms, per_mob_cd={hpBarControl.HpEventPerMobCooldownMs}ms, per_frame={hpBarControl.MaxHpEventsPerCaptureFrame}, active_mobs={hpBarControl.MaxHpActiveMobs}");
-                Console.WriteLine($"                 probs(normal/attack/hit/death)={hpBarControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{hpBarControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
+                Console.WriteLine("  labels       : class0=mob_dead, class1=mob_active");
                 Console.WriteLine($"  dmg_num_ctrl : global_cd={damageControl.GlobalCooldownMs}ms, per_mob_cd={damageControl.PerMobCooldownMs}ms, per_frame={damageControl.MaxEventsPerCaptureFrame}, active_nums={damageControl.MaxActiveNumbers}, ratio_cap={damageControl.UseMobRatioCap}, mob_ratio={damageControl.MobRatio:0.###}, frame_cap={damageControl.MinEventsPerCaptureFrame}-{damageControl.MaxEventsPerCaptureFrameCap}");
                 Console.WriteLine($"                 probs(normal/attack/hit/death)={damageControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{damageControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
                 Console.WriteLine($"                 template_style={damageControl.TemplateStyle}, template_weights=single:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Single, 0)},double_tap:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.DoubleTap, 0)},rapid_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.RapidCombo, 0)},stagger_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.StaggerCombo, 0)},finisher:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Finisher, 0)}");
                 Console.WriteLine($"  hit_effect_ctrl: enabled={hitEffectControl.Enabled}, palette={hitEffectControl.PaletteMode}, alpha={hitEffectControl.AlphaMin:0.##}-{hitEffectControl.AlphaMax:0.##}, scale={hitEffectControl.ScaleMin:0.##}-{hitEffectControl.ScaleMax:0.##}, lifetime={hitEffectControl.LifetimeMsMin}-{hitEffectControl.LifetimeMsMax}ms, layers={hitEffectControl.ExtraLayersMin}-{hitEffectControl.ExtraLayersMax}, jitter={hitEffectControl.JitterPxX}x{hitEffectControl.JitterPxY}, variations=[{string.Join(",", hitEffectControl.VariationPool)}]");
-                Console.WriteLine($"  real_skill_fx : enabled={realSkillEffectControl.Enabled}, source={realSkillEffectControl.Source}, kind={realSkillEffectControl.Kind}, fallback={realSkillEffectControl.Fallback}");
-                Console.WriteLine($"  capture_guard: throughput_floor_per_10m={captureGuard.ThroughputFloorPer10Minutes}, throughput_floor_per_5m={captureGuard.ThroughputFloorPer5Minutes}, hp_label_cap_per_frame={captureGuard.HpLabelCapPerFrame}, hp_unpaired_fallback_prob={captureGuard.HpUnpairedFallbackProb:0.###}, death_label_prob_in_death_profile={captureGuard.DeathLabelProbInDeathProfile:0.###}, offscreen_recover_backoff_ms=[{string.Join(",", captureGuard.OffscreenRecoverBackoffMs)}], max_consecutive_capture_failures_per_map={captureGuard.MaxConsecutiveCaptureFailuresPerMap}");
+                Console.WriteLine($"  real_skill_fx : enabled={realSkillEffectControl.Enabled}, source={realSkillEffectControl.Source}, kind={realSkillEffectControl.Kind}");
                 var writer = job.writer ?? new WriterControl();
                 int writerThreads = Math.Max(1, writer.threads);
                 int writerQueueCapacity = Math.Max(16, writer.queue_capacity);
@@ -339,11 +304,9 @@ namespace HaCreator.MapSimulator.Automation
                                 CaptureProfileMix = BuildProfileMix(job.capture_profile_mix),
                                 BucketMix = bucketMix,
                                 BucketPolicy = bucketPolicy,
-                                HpBarControl = hpBarControl,
                                 DamageNumberControl = damageControl,
                                 HitEffectControl = hitEffectControl,
-                                RealSkillEffect = realSkillEffectControl,
-                                CaptureGuard = captureGuard
+                                RealSkillEffect = realSkillEffectControl
                             };
 
                             Console.WriteLine($"[AutoCap] 开始采集 map={mapId:D9} res={resolutionName}");
@@ -687,27 +650,6 @@ namespace HaCreator.MapSimulator.Automation
             }.Normalize();
         }
 
-        private static AutoCaptureHpBarControl BuildHpBarControl(HpBarControl control)
-        {
-            control ??= new HpBarControl();
-            var prob = control.hp_event_prob_by_profile ?? new HpEventProbByProfile();
-
-            return new AutoCaptureHpBarControl
-            {
-                HpEventGlobalCooldownMs = Math.Max(0, control.hp_event_global_cooldown_ms),
-                HpEventPerMobCooldownMs = Math.Max(0, control.hp_event_per_mob_cooldown_ms),
-                MaxHpEventsPerCaptureFrame = Math.Max(0, control.max_hp_events_per_capture_frame),
-                MaxHpActiveMobs = Math.Max(1, control.max_hp_active_mobs),
-                HpEventProbByProfile = new Dictionary<AutoCaptureProfile, double>
-                {
-                    [AutoCaptureProfile.NormalMove] = Math.Clamp(prob.normal, 0d, 1d),
-                    [AutoCaptureProfile.AttackHeavy] = Math.Clamp(prob.attack, 0d, 1d),
-                    [AutoCaptureProfile.HitOcclusionHeavy] = Math.Clamp(prob.hit, 0d, 1d),
-                    [AutoCaptureProfile.DeathHeavy] = Math.Clamp(prob.death, 0d, 1d)
-                }
-            }.Normalize();
-        }
-
         private static AutoCaptureDamageNumberControl BuildDamageNumberControl(DamageNumberControl control)
         {
             control ??= new DamageNumberControl();
@@ -784,21 +726,6 @@ namespace HaCreator.MapSimulator.Automation
             }.Normalize();
         }
 
-        private static AutoCaptureCaptureGuardControl BuildCaptureGuard(CaptureGuard guard)
-        {
-            guard ??= new CaptureGuard();
-            return new AutoCaptureCaptureGuardControl
-            {
-                ThroughputFloorPer10Minutes = Math.Max(1, guard.throughput_floor_per_10m),
-                ThroughputFloorPer5Minutes = Math.Max(1, guard.throughput_floor_per_5m),
-                HpLabelCapPerFrame = Math.Clamp(guard.hp_label_cap_per_frame, 1, 2),
-                HpUnpairedFallbackProb = Math.Clamp(guard.hp_unpaired_fallback_prob, 0d, 1d),
-                DeathLabelProbInDeathProfile = Math.Clamp(guard.death_label_prob_in_death_profile, 0d, 1d),
-                OffscreenRecoverBackoffMs = guard.offscreen_recover_backoff_ms ?? new[] { 100, 300, 500 },
-                MaxConsecutiveCaptureFailuresPerMap = Math.Clamp(guard.max_consecutive_capture_failures_per_map, 1, 10000)
-            }.Normalize();
-        }
-
         private static AutoCaptureRealSkillEffectControl BuildRealSkillEffectControl(RealSkillEffectControl control)
         {
             control ??= new RealSkillEffectControl();
@@ -806,8 +733,7 @@ namespace HaCreator.MapSimulator.Automation
             {
                 Enabled = control.enabled,
                 Source = control.source,
-                Kind = control.kind,
-                Fallback = control.fallback
+                Kind = control.kind
             }.Normalize();
         }
     }

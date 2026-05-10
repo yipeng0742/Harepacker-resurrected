@@ -52,16 +52,12 @@ namespace HaCreator.MapSimulator.Automation
             AutoCaptureCameraPlan.CreateDefault();
         public Dictionary<AutoCaptureProfile, int> CaptureProfileMix { get; set; } =
             CreateDefaultProfileMix();
-        public AutoCaptureHpBarControl HpBarControl { get; set; } =
-            AutoCaptureHpBarControl.CreateDefault();
         public AutoCaptureDamageNumberControl DamageNumberControl { get; set; } =
             AutoCaptureDamageNumberControl.CreateDefault();
         public AutoCaptureHitEffectControl HitEffectControl { get; set; } =
             AutoCaptureHitEffectControl.CreateDefault();
         public AutoCaptureRealSkillEffectControl RealSkillEffect { get; set; } =
             AutoCaptureRealSkillEffectControl.CreateDefault();
-        public AutoCaptureCaptureGuardControl CaptureGuard { get; set; } =
-            AutoCaptureCaptureGuardControl.CreateDefault();
         public AutoCaptureBucketMix BucketMix { get; set; } =
             AutoCaptureBucketMix.CreateDefault();
         public AutoCaptureBucketPolicy BucketPolicy { get; set; } =
@@ -100,11 +96,6 @@ namespace HaCreator.MapSimulator.Automation
             return normalized;
         }
 
-        public AutoCaptureHpBarControl GetNormalizedHpBarControl()
-        {
-            return (HpBarControl ?? AutoCaptureHpBarControl.CreateDefault()).Normalize();
-        }
-
         public AutoCaptureDamageNumberControl GetNormalizedDamageNumberControl()
         {
             return (DamageNumberControl ?? AutoCaptureDamageNumberControl.CreateDefault()).Normalize();
@@ -123,11 +114,6 @@ namespace HaCreator.MapSimulator.Automation
         public AutoCaptureCameraPlan GetNormalizedCameraPlan()
         {
             return (CameraPlan ?? AutoCaptureCameraPlan.CreateDefault()).Normalize();
-        }
-
-        public AutoCaptureCaptureGuardControl GetNormalizedCaptureGuard()
-        {
-            return (CaptureGuard ?? AutoCaptureCaptureGuardControl.CreateDefault()).Normalize();
         }
 
         public AutoCaptureBucketMix GetNormalizedBucketMix()
@@ -283,64 +269,6 @@ namespace HaCreator.MapSimulator.Automation
                 HitDamageMinProb = Math.Clamp(HitDamageMinProb, 0d, 1d),
                 GlobalRatioScope = scope
             };
-        }
-    }
-
-    internal sealed class AutoCaptureHpBarControl
-    {
-        public int HpEventGlobalCooldownMs { get; set; } = 180;
-        public int HpEventPerMobCooldownMs { get; set; } = 650;
-        public int MaxHpEventsPerCaptureFrame { get; set; } = 6;
-        public int MaxHpActiveMobs { get; set; } = 6;
-        public Dictionary<AutoCaptureProfile, double> HpEventProbByProfile { get; set; } =
-            CreateDefaultProbabilities();
-
-        public static AutoCaptureHpBarControl CreateDefault()
-        {
-            return new AutoCaptureHpBarControl();
-        }
-
-        public static Dictionary<AutoCaptureProfile, double> CreateDefaultProbabilities()
-        {
-            return new Dictionary<AutoCaptureProfile, double>
-            {
-                [AutoCaptureProfile.NormalMove] = 0.10d,
-                [AutoCaptureProfile.AttackHeavy] = 0.18d,
-                [AutoCaptureProfile.HitOcclusionHeavy] = 0.28d,
-                [AutoCaptureProfile.DeathHeavy] = 0.06d
-            };
-        }
-
-        public AutoCaptureHpBarControl Normalize()
-        {
-            var normalized = new AutoCaptureHpBarControl
-            {
-                HpEventGlobalCooldownMs = Math.Max(0, HpEventGlobalCooldownMs),
-                HpEventPerMobCooldownMs = Math.Max(0, HpEventPerMobCooldownMs),
-                MaxHpEventsPerCaptureFrame = Math.Max(0, MaxHpEventsPerCaptureFrame),
-                MaxHpActiveMobs = Math.Max(1, MaxHpActiveMobs),
-                HpEventProbByProfile = new Dictionary<AutoCaptureProfile, double>()
-            };
-
-            var source = HpEventProbByProfile ?? CreateDefaultProbabilities();
-            foreach (AutoCaptureProfile profile in Enum.GetValues(typeof(AutoCaptureProfile)))
-            {
-                double value = source.TryGetValue(profile, out double p)
-                    ? p
-                    : CreateDefaultProbabilities()[profile];
-                normalized.HpEventProbByProfile[profile] = Math.Clamp(value, 0d, 1d);
-            }
-            return normalized;
-        }
-
-        public double GetProbability(AutoCaptureProfile profile)
-        {
-            var source = HpEventProbByProfile ?? CreateDefaultProbabilities();
-            if (!source.TryGetValue(profile, out double value))
-            {
-                value = CreateDefaultProbabilities()[profile];
-            }
-            return Math.Clamp(value, 0d, 1d);
         }
     }
 
@@ -541,7 +469,6 @@ namespace HaCreator.MapSimulator.Automation
         public bool Enabled { get; set; } = true;
         public string Source { get; set; } = "all_skills";
         public string Kind { get; set; } = "hit_only";
-        public string Fallback { get; set; } = "skip";
 
         public static AutoCaptureRealSkillEffectControl CreateDefault()
         {
@@ -566,75 +493,15 @@ namespace HaCreator.MapSimulator.Automation
                 kind = "hit_only";
             }
 
-            string fallback = string.IsNullOrWhiteSpace(Fallback)
-                ? "skip"
-                : Fallback.Trim().ToLowerInvariant();
-            if (!string.Equals(fallback, "skip", StringComparison.Ordinal))
-            {
-                fallback = "skip";
-            }
-
             return new AutoCaptureRealSkillEffectControl
             {
                 Enabled = Enabled,
                 Source = source,
-                Kind = kind,
-                Fallback = fallback
+                Kind = kind
             };
         }
     }
 
-    internal sealed class AutoCaptureCaptureGuardControl
-    {
-        public int ThroughputFloorPer10Minutes { get; set; } = 120;
-        public int ThroughputFloorPer5Minutes { get; set; } = 100;
-        public int HpLabelCapPerFrame { get; set; } = 1;
-        public double HpUnpairedFallbackProb { get; set; } = 0.02d;
-        public double DeathLabelProbInDeathProfile { get; set; } = 0.25d;
-        public int[] OffscreenRecoverBackoffMs { get; set; } = new[] { 100, 300, 500 };
-        public int MaxConsecutiveCaptureFailuresPerMap { get; set; } = 24;
-
-        public static AutoCaptureCaptureGuardControl CreateDefault()
-        {
-            return new AutoCaptureCaptureGuardControl();
-        }
-
-        public AutoCaptureCaptureGuardControl Normalize()
-        {
-            return new AutoCaptureCaptureGuardControl
-            {
-                ThroughputFloorPer10Minutes = Math.Max(1, ThroughputFloorPer10Minutes),
-                ThroughputFloorPer5Minutes = Math.Max(1, ThroughputFloorPer5Minutes),
-                HpLabelCapPerFrame = Math.Clamp(HpLabelCapPerFrame, 1, 2),
-                HpUnpairedFallbackProb = Math.Clamp(HpUnpairedFallbackProb, 0d, 1d),
-                DeathLabelProbInDeathProfile = Math.Clamp(DeathLabelProbInDeathProfile, 0d, 1d),
-                OffscreenRecoverBackoffMs = NormalizeBackoff(OffscreenRecoverBackoffMs),
-                MaxConsecutiveCaptureFailuresPerMap = Math.Clamp(MaxConsecutiveCaptureFailuresPerMap, 1, 10000)
-            };
-        }
-
-        private static int[] NormalizeBackoff(int[] source)
-        {
-            var list = new List<int>();
-            if (source != null)
-            {
-                foreach (int ms in source)
-                {
-                    if (ms >= 0)
-                    {
-                        list.Add(Math.Clamp(ms, 0, 10_000));
-                    }
-                }
-            }
-
-            if (list.Count == 0)
-            {
-                list.AddRange(new[] { 100, 300, 500 });
-            }
-
-            return list.ToArray();
-        }
-    }
 
     internal static class AutoCaptureRuntime
     {

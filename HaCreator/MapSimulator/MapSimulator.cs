@@ -221,12 +221,9 @@ namespace HaCreator.MapSimulator
         private Dictionary<AutoCaptureProfile, int> _autoCaptureProfileMix = AutoCaptureRunOptions.CreateDefaultProfileMix();
         private AutoCaptureBucketMix _autoCaptureBucketMix = AutoCaptureBucketMix.CreateDefault();
         private AutoCaptureBucketPolicy _autoCaptureBucketPolicy = AutoCaptureBucketPolicy.CreateDefault();
-        private AutoCaptureHpBarControl _autoCaptureHpBarControl = AutoCaptureHpBarControl.CreateDefault();
         private AutoCaptureDamageNumberControl _autoCaptureDamageNumberControl = AutoCaptureDamageNumberControl.CreateDefault();
         private AutoCaptureHitEffectControl _autoCaptureHitEffectControl = AutoCaptureHitEffectControl.CreateDefault();
         private AutoCaptureRealSkillEffectControl _autoCaptureRealSkillEffectControl = AutoCaptureRealSkillEffectControl.CreateDefault();
-        private AutoCaptureCaptureGuardControl _autoCaptureCaptureGuardControl = AutoCaptureCaptureGuardControl.CreateDefault();
-        private bool _autoCaptureBucketPreparedForSampling = false;
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketAttempted = new Dictionary<AutoCaptureDataBucket, int>();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketSaved = new Dictionary<AutoCaptureDataBucket, int>();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketAttemptedSnapshot = new Dictionary<AutoCaptureDataBucket, int>();
@@ -281,32 +278,18 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureCaptureSkippedEmpty = 0;
         private int _autoCaptureBoundsRawCount = 0;
         private int _autoCaptureBoundsUsableCount = 0;
-        private int _autoCaptureFallbackBoxInjectedCount = 0;
-        private int _autoCaptureFallbackSavedWindowIndex = -1;
-        private int _autoCaptureFallbackInjectedInSavedWindow = 0;
-        private int _autoCaptureFallbackDynamicCapCurrent = AutoCapFallbackInjectCapPerWindow;
         private int _autoCaptureCaptureAttemptedSnapshot = 0;
         private int _autoCaptureCaptureSavedSnapshot = 0;
         private int _autoCaptureCaptureSkippedEmptySnapshot = 0;
         private int _autoCaptureBoundsRawSnapshot = 0;
         private int _autoCaptureBoundsUsableSnapshot = 0;
-        private int _autoCaptureFallbackBoxInjectedSnapshot = 0;
         private int _autoCaptureSaveFailCount = 0;
         private int _autoCaptureSaveFailCountSnapshot = 0;
         private readonly Dictionary<string, int> _autoCaptureSaveFailByReason = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        private readonly Queue<int> _autoCaptureSavedTickWindow = new Queue<int>();
-        private readonly Queue<int> _autoCaptureSavedTickWindow5m = new Queue<int>();
-        private int _autoCaptureThroughputWarnLastTick = int.MinValue / 2;
-        private int _autoCaptureThroughputWarnLastTick5m = int.MinValue / 2;
-        private int _autoCaptureStartTick = 0;
         private const int HpBarPairingRadiusPx = 220;
-        private const int AutoCapThroughputWindowMs = 10 * 60 * 1000;
-        private const int AutoCapThroughputWindow5mMs = 5 * 60 * 1000;
-        private const int AutoCapThroughputWarnIntervalMs = 60 * 1000;
-        private const int AutoCapThroughputWarnInterval5mMs = 30 * 1000;
+        private const int AutoCapMaxActiveHpBars = 6;
+        private const int AutoCapDeathLabelProbPercent = 25;
         private const int AutoCapViewSafeMarginPx = 80;
-        private const int AutoCapFallbackWindowSize = 30;
-        private const int AutoCapFallbackInjectCapPerWindow = 12;
         private const int AutoCapClassMobDead = 0;
         private const int AutoCapClassMobActive = 1;
         private static readonly Color[] AutoCapHitEffectTintPaletteBasic = new[]
@@ -474,11 +457,9 @@ namespace HaCreator.MapSimulator
             _autoCaptureProfileMix = _autoCaptureOptions.GetNormalizedProfileMix();
             _autoCaptureBucketMix = _autoCaptureOptions.GetNormalizedBucketMix();
             _autoCaptureBucketPolicy = _autoCaptureOptions.GetNormalizedBucketPolicy();
-            _autoCaptureHpBarControl = _autoCaptureOptions.GetNormalizedHpBarControl();
             _autoCaptureDamageNumberControl = _autoCaptureOptions.GetNormalizedDamageNumberControl();
             _autoCaptureHitEffectControl = _autoCaptureOptions.GetNormalizedHitEffectControl();
             _autoCaptureRealSkillEffectControl = _autoCaptureOptions.GetNormalizedRealSkillEffectControl();
-            _autoCaptureCaptureGuardControl = _autoCaptureOptions.GetNormalizedCaptureGuard();
             _autoCaptureCameraPlan = _autoCaptureOptions.GetNormalizedCameraPlan();
             _autoCaptureWarmupFramesRemaining = _autoCaptureCameraPlan.StartupWarmupFrames;
             _autoCaptureSettleFramesRemaining = 0;
@@ -488,14 +469,13 @@ namespace HaCreator.MapSimulator
             // The hardcoded skill loading logic is now deprecated in favor of the dynamic skill pool.
             // We still keep the control check for compatibility, but we rely on BuildAutoCaptureNativeDamageSkillPool below.
 
-            _datasetGenerator.ConfigureRecoverBackoff(_autoCaptureCaptureGuardControl.OffscreenRecoverBackoffMs);
+            _datasetGenerator.ConfigureRecoverBackoff(new[] { 100, 300, 500 });
             _datasetGenerator.StartGeneration();
             int runtimeSeed = _autoCaptureOptions.Seed ^ _autoCaptureOptions.MapId ^ (_autoCaptureOptions.ResolutionName?.GetHashCode() ?? 0);
             _autoCaptureRandom = new Random(runtimeSeed);
             _autoCaptureCurrentBucket = SelectBucketByGlobalDeficit();
             _autoCaptureCurrentProfile = SelectProfileForBucket(_autoCaptureCurrentBucket);
             _autoCaptureProfileSwitchTick = Environment.TickCount;
-            _autoCaptureBucketPreparedForSampling = false;
             _autoCaptureHpLastTickByMob.Clear();
             _autoCaptureDmgLastTickByMob.Clear();
             _autoCaptureBucketAttempted.Clear();
@@ -537,19 +517,9 @@ namespace HaCreator.MapSimulator
             _autoCaptureBoundsUsableCount = 0;
             _autoCaptureBoundsRawSnapshot = 0;
             _autoCaptureBoundsUsableSnapshot = 0;
-            _autoCaptureFallbackBoxInjectedCount = 0;
-            _autoCaptureFallbackBoxInjectedSnapshot = 0;
-            _autoCaptureFallbackSavedWindowIndex = -1;
-            _autoCaptureFallbackInjectedInSavedWindow = 0;
-            _autoCaptureFallbackDynamicCapCurrent = AutoCapFallbackInjectCapPerWindow;
             _autoCaptureSaveFailCount = 0;
             _autoCaptureSaveFailCountSnapshot = 0;
             _autoCaptureSaveFailByReason.Clear();
-            _autoCaptureSavedTickWindow.Clear();
-            _autoCaptureSavedTickWindow5m.Clear();
-            _autoCaptureThroughputWarnLastTick = int.MinValue / 2;
-            _autoCaptureThroughputWarnLastTick5m = int.MinValue / 2;
-            _autoCaptureStartTick = Environment.TickCount;
             _autoCaptureCurrentPointIndex = -1;
             _autoCaptureTotalPointCount = 0;
             _autoCaptureExpectedFrameCount = 0;
@@ -585,13 +555,11 @@ namespace HaCreator.MapSimulator
             System.Console.WriteLine(
                 $"[AutoCap] camera_plan mode={_autoCaptureCameraPlan.Mode} step_mode={_autoCaptureCameraPlan.Traversal} warmup_frames={_autoCaptureCameraPlan.StartupWarmupFrames} settle_frames={_autoCaptureCameraPlan.SettleFrames} sample_frames_per_point={_autoCaptureCameraPlan.SampleFramesPerPoint}");
             System.Console.WriteLine(
-                $"[AutoCap] hp_bar_ctrl: DISABLED per refactoring");
-            System.Console.WriteLine(
                 $"[AutoCap] dmg_num_ctrl global_cd={_autoCaptureDamageNumberControl.GlobalCooldownMs}ms per_mob_cd={_autoCaptureDamageNumberControl.PerMobCooldownMs}ms per_capture_frame={_autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame} max_active_numbers={_autoCaptureDamageNumberControl.MaxActiveNumbers}");
             System.Console.WriteLine(
                 $"[AutoCap] hit_effect_ctrl enabled={_autoCaptureHitEffectControl.Enabled} palette={_autoCaptureHitEffectControl.PaletteMode} alpha={_autoCaptureHitEffectControl.AlphaMin:0.##}-{_autoCaptureHitEffectControl.AlphaMax:0.##} scale={_autoCaptureHitEffectControl.ScaleMin:0.##}-{_autoCaptureHitEffectControl.ScaleMax:0.##} lifetime={_autoCaptureHitEffectControl.LifetimeMsMin}-{_autoCaptureHitEffectControl.LifetimeMsMax}ms layers={_autoCaptureHitEffectControl.ExtraLayersMin}-{_autoCaptureHitEffectControl.ExtraLayersMax} jitter={_autoCaptureHitEffectControl.JitterPxX}x{_autoCaptureHitEffectControl.JitterPxY} variations=[{string.Join(",", _autoCaptureHitEffectControl.VariationPool)}]");
             System.Console.WriteLine(
-                $"[AutoCap] capture_guard throughput_floor_per_10m={_autoCaptureCaptureGuardControl.ThroughputFloorPer10Minutes} throughput_floor_per_5m={_autoCaptureCaptureGuardControl.ThroughputFloorPer5Minutes} hp_label_cap_per_frame={_autoCaptureCaptureGuardControl.HpLabelCapPerFrame} hp_unpaired_fallback_prob={_autoCaptureCaptureGuardControl.HpUnpairedFallbackProb:0.###} death_label_prob_in_death_profile={_autoCaptureCaptureGuardControl.DeathLabelProbInDeathProfile:0.###} offscreen_recover_backoff_ms=[{string.Join(",", _autoCaptureCaptureGuardControl.OffscreenRecoverBackoffMs ?? Array.Empty<int>())}] max_consecutive_capture_failures_per_map={_autoCaptureCaptureGuardControl.MaxConsecutiveCaptureFailuresPerMap}");
+                "[AutoCap] labels class0=mob_dead class1=mob_active");
             System.Console.WriteLine(
                 $"[AutoCap] writer_config requested={_autoCaptureOptions.WriterThreads}/{_autoCaptureOptions.WriterQueueCapacity} effective={_datasetGenerator.WriterThreadsEffective}/{_datasetGenerator.WriterQueueCapacityEffective}");
         }
@@ -1209,7 +1177,6 @@ namespace HaCreator.MapSimulator
             _autoCaptureCameraPhase = _autoCaptureSettleFramesRemaining > 0
                 ? AutoCaptureCameraPhase.Settling
                 : AutoCaptureCameraPhase.Sampling;
-            _autoCaptureBucketPreparedForSampling = false;
         }
 
         private void MarkAutoCaptureSamplingDecision()
@@ -1450,7 +1417,6 @@ namespace HaCreator.MapSimulator
             _autoCaptureCurrentBucket = SelectBucketByGlobalDeficit();
             _autoCaptureCurrentProfile = SelectProfileForBucket(_autoCaptureCurrentBucket);
             _autoCaptureProfileSwitchTick = Environment.TickCount;
-            _autoCaptureBucketPreparedForSampling = true;
         }
 
         private bool IsDeadMutualExclusionEnabled()
@@ -1531,8 +1497,6 @@ namespace HaCreator.MapSimulator
             if (!_datasetGenerator.IsGenerating || _mobPool?.ActiveMobs == null)
                 return;
 
-            TryReportThroughputLow(tick);
-            TryReportThroughput5m(tick);
             var bucketTuning = BuildBucketTuning();
             int capturedFrames = _datasetGenerator.CapturedFrameCount;
             if (capturedFrames > 0 && capturedFrames % 30 == 0 && capturedFrames != _autoCaptureLastProfileLogFrame)
@@ -1551,7 +1515,6 @@ namespace HaCreator.MapSimulator
                 int capSkippedEmptyDelta = _autoCaptureCaptureSkippedEmpty - _autoCaptureCaptureSkippedEmptySnapshot;
                 int boundsRawDelta = _autoCaptureBoundsRawCount - _autoCaptureBoundsRawSnapshot;
                 int boundsUsableDelta = _autoCaptureBoundsUsableCount - _autoCaptureBoundsUsableSnapshot;
-                int fallbackInjectedDelta = _autoCaptureFallbackBoxInjectedCount - _autoCaptureFallbackBoxInjectedSnapshot;
                 int saveFailDelta = _autoCaptureSaveFailCount - _autoCaptureSaveFailCountSnapshot;
                 int bucketAttemptA = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.CleanBaseline) - GetBucketCount(_autoCaptureBucketAttemptedSnapshot, AutoCaptureDataBucket.CleanBaseline);
                 int bucketAttemptB = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.AnchorDecoupling) - GetBucketCount(_autoCaptureBucketAttemptedSnapshot, AutoCaptureDataBucket.AnchorDecoupling);
@@ -1575,7 +1538,6 @@ namespace HaCreator.MapSimulator
                 _autoCaptureCaptureSkippedEmptySnapshot = _autoCaptureCaptureSkippedEmpty;
                 _autoCaptureBoundsRawSnapshot = _autoCaptureBoundsRawCount;
                 _autoCaptureBoundsUsableSnapshot = _autoCaptureBoundsUsableCount;
-                _autoCaptureFallbackBoxInjectedSnapshot = _autoCaptureFallbackBoxInjectedCount;
                 _autoCaptureSaveFailCountSnapshot = _autoCaptureSaveFailCount;
                 foreach (var bucket in EnumerateAllBuckets())
                 {
@@ -1587,7 +1549,7 @@ namespace HaCreator.MapSimulator
                 int scanIdx = _autoCaptureCurrentPointIndex + 1;
                 int scanTotal = _autoCaptureScanPath?.Count ?? 0;
                 System.Console.WriteLine(
-                    $"[AutoCap][閲囬泦鎽樿] frame={capturedFrames} point_idx={scanIdx} point_total={scanTotal} sampled_frames_at_point={_autoCaptureSampledFramesAtPoint} phase={_autoCaptureCameraPhase} bucket={GetBucketCode(_autoCaptureCurrentBucket)} profile={_autoCaptureCurrentProfile} capture_attempted={capAttemptedDelta} saved={capSavedDelta} skipped_empty={capSkippedEmptyDelta} bucket_attempted=A:{bucketAttemptA},B:{bucketAttemptB},C:{bucketAttemptC},D:{bucketAttemptD} bucket_saved=A:{bucketSavedA},B:{bucketSavedB},C:{bucketSavedC},D:{bucketSavedD} bounds_raw={boundsRawDelta} bounds_usable={boundsUsableDelta} fallback_box_injected={fallbackInjectedDelta} fallback_cap_window={_autoCaptureFallbackDynamicCapCurrent} save_fail={saveFailDelta} save_fail_reason={saveFailReason} save_fail_by_reason={saveFailByReason} save_rate={saveRate:0.000} hp_event_attempted={hpAttemptedDelta} hp_event_fired={hpFiredDelta} hp_event_skipped_cooldown={hpSkippedDelta} hp_active_mobs={_effectManager?.Combat?.ActiveMobHPBars ?? 0} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
+                    $"[AutoCap][采集摘要] frame={capturedFrames} point_idx={scanIdx} point_total={scanTotal} sampled_frames_at_point={_autoCaptureSampledFramesAtPoint} phase={_autoCaptureCameraPhase} bucket={GetBucketCode(_autoCaptureCurrentBucket)} profile={_autoCaptureCurrentProfile} capture_attempted={capAttemptedDelta} saved={capSavedDelta} skipped_empty={capSkippedEmptyDelta} bucket_attempted=A:{bucketAttemptA},B:{bucketAttemptB},C:{bucketAttemptC},D:{bucketAttemptD} bucket_saved=A:{bucketSavedA},B:{bucketSavedB},C:{bucketSavedC},D:{bucketSavedD} bounds_raw={boundsRawDelta} bounds_usable={boundsUsableDelta} save_fail={saveFailDelta} save_fail_reason={saveFailReason} save_fail_by_reason={saveFailByReason} save_rate={saveRate:0.000} hp_event_attempted={hpAttemptedDelta} hp_event_fired={hpFiredDelta} hp_event_skipped_cooldown={hpSkippedDelta} hp_active_mobs={_effectManager?.Combat?.ActiveMobHPBars ?? 0} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
             }
             var combat = _effectManager?.Combat;
             var forceStateMobs = new List<MobItem>();
@@ -1766,8 +1728,8 @@ namespace HaCreator.MapSimulator
             int availableByFrame = Math.Max(0, targetMobCount - _autoCaptureDmgEventsUsedOnCaptureFrame);
             int availableByHpFrame = Math.Max(0, targetMobCount - _autoCaptureHpEventsUsedOnCaptureFrame);
             int availableByDmgHard = Math.Max(0, _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame - _autoCaptureDmgEventsUsedOnCaptureFrame);
-            int availableByHpHard = Math.Max(0, _autoCaptureHpBarControl.MaxHpEventsPerCaptureFrame - _autoCaptureHpEventsUsedOnCaptureFrame);
-            int availableByActiveHp = Math.Max(0, _autoCaptureHpBarControl.MaxHpActiveMobs - combat.ActiveMobHPBars);
+            int availableByHpHard = Math.Max(0, 6 - _autoCaptureHpEventsUsedOnCaptureFrame);
+            int availableByActiveHp = Math.Max(0, AutoCapMaxActiveHpBars - combat.ActiveMobHPBars);
             int maxTargetMobs = Math.Min(
                 Math.Min(Math.Min(availableByFrame, availableByHpFrame), Math.Min(availableByDmgHard, availableByHpHard)),
                 availableByActiveHp);
@@ -1778,7 +1740,7 @@ namespace HaCreator.MapSimulator
             int selectedMobCount = Math.Min(Math.Min(targetMobCount, maxTargetMobs), Math.Min(6, candidates.Count));
 
             double damageProb = _autoCaptureDamageNumberControl.GetProbability(_autoCaptureCurrentProfile);
-            double hpProb = _autoCaptureHpBarControl.GetProbability(_autoCaptureCurrentProfile);
+            double hpProb = 0d;
             bool hasHitState = _autoCaptureLastFrameHasForcedHitState;
             bool standMoveOnly = !hasHitState && forceStateMobs != null && forceStateMobs.All(m => m == null || IsStandMoveLikeAction(m.CurrentAction));
             if (hasHitState)
@@ -1836,7 +1798,7 @@ namespace HaCreator.MapSimulator
                 for (int burst = 0; burst < segmentCount; burst++)
                 {
                     if (combat.ActiveDamageNumbers >= _autoCaptureDamageNumberControl.MaxActiveNumbers ||
-                        combat.ActiveMobHPBars >= _autoCaptureHpBarControl.MaxHpActiveMobs)
+                        combat.ActiveMobHPBars >= AutoCapMaxActiveHpBars)
                     {
                         break;
                     }
@@ -2307,53 +2269,6 @@ namespace HaCreator.MapSimulator
             return _autoCaptureRandom.NextDouble() < Math.Clamp(chance, 0.05d, 0.65d);
         }
 
-        private void TryTriggerAutoCaptureHpBars(CombatEffects combat, int tick, List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)
-        {
-            // HP bar generation disabled per refactoring requirements.
-            return;
-
-            if (tick != _autoCaptureHpFrameMarker)
-            {
-                _autoCaptureHpFrameMarker = tick;
-                _autoCaptureHpEventsUsedOnCaptureFrame = 0;
-            }
-
-            if (_autoCaptureHpEventsUsedOnCaptureFrame >= _autoCaptureHpBarControl.MaxHpEventsPerCaptureFrame)
-            {
-                return;
-            }
-
-            if (combat.ActiveMobHPBars >= _autoCaptureHpBarControl.MaxHpActiveMobs)
-            {
-                return;
-            }
-
-            double hpProb = _autoCaptureHpBarControl.GetProbability(_autoCaptureCurrentProfile);
-            if (_autoCaptureRandom.NextDouble() >= hpProb)
-            {
-                return;
-            }
-
-            var candidates = BuildHpEventCandidates(forceStateMobs, fallbackMobs);
-            foreach (var mob in candidates)
-            {
-                _autoCaptureHpAttempted++;
-                if (!CanFireHpEventForMob(mob, tick))
-                {
-                    _autoCaptureHpSkippedCooldown++;
-                    continue;
-                }
-
-                combat.OnMobDamaged(mob, tick);
-                combat.RandomizeMobHPBarForDataset(mob.PoolId, _autoCaptureRandom);
-                _autoCaptureHpLastGlobalTick = tick;
-                _autoCaptureHpLastTickByMob[mob.PoolId] = tick;
-                _autoCaptureHpEventsUsedOnCaptureFrame++;
-                _autoCaptureHpFired++;
-                break;
-            }
-        }
-
         private List<MobItem> BuildHpEventCandidates(List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)
         {
             var list = new List<MobItem>();
@@ -2406,34 +2321,6 @@ namespace HaCreator.MapSimulator
             double dx = mob.CurrentX - centerX;
             double dy = mob.CurrentY - centerY;
             return dx * dx + dy * dy;
-        }
-
-        private bool CanFireHpEventForMob(MobItem mob, int tick)
-        {
-            if (mob == null)
-            {
-                return false;
-            }
-            if (IsDeadLikeMob(mob))
-            {
-                return false;
-            }
-
-            int globalElapsed = unchecked(tick - _autoCaptureHpLastGlobalTick);
-            if (globalElapsed < _autoCaptureHpBarControl.HpEventGlobalCooldownMs)
-            {
-                return false;
-            }
-
-            if (_autoCaptureHpLastTickByMob.TryGetValue(mob.PoolId, out int lastPerMobTick))
-            {
-                int perMobElapsed = unchecked(tick - lastPerMobTick);
-                if (perMobElapsed < _autoCaptureHpBarControl.HpEventPerMobCooldownMs)
-                {
-                    return false;
-                }
-            }
-            return true;
         }
 
         private bool CanFireDamageEventForMob(MobItem mob, int tick)
@@ -6938,7 +6825,7 @@ namespace HaCreator.MapSimulator
                         {
                             // 闅忔満娉ㄥ叆姝讳骸鏍囩浠ュ寮烘牱鏈?diversity (浠呭湪 DeathHeavy 妯″紡涓?
                             if (_autoCaptureCurrentProfile == AutoCaptureProfile.DeathHeavy &&
-                                _autoCaptureRandom.NextDouble() < _autoCaptureCaptureGuardControl.DeathLabelProbInDeathProfile)
+                                _autoCaptureRandom.NextDouble() < (AutoCapDeathLabelProbPercent / 100d))
                             {
                                 int deadAdded = 0;
                                 foreach (var mob in _mobPool.DyingMobs)
@@ -7027,8 +6914,6 @@ namespace HaCreator.MapSimulator
 
                             _autoCaptureCaptureSaved++;
                             IncrementBucketCount(_autoCaptureBucketSaved, _autoCaptureCurrentBucket);
-                            RegisterCaptureSaved(TickCount);
-                            TryReportThroughputLow(TickCount);
                             AppendBucketManifest(
                                 frameNo,
                                 _autoCaptureCurrentBucket,
@@ -7115,63 +7000,6 @@ namespace HaCreator.MapSimulator
                    s.StartsWith("death", StringComparison.Ordinal);
         }
 
-        private double GetHpBarLabelFrameProbability(AutoCaptureProfile profile)
-        {
-            if (_autoCaptureCurrentBucket == AutoCaptureDataBucket.CleanBaseline)
-            {
-                return 0d;
-            }
-            if (_autoCaptureCurrentBucket == AutoCaptureDataBucket.AnchorDecoupling)
-            {
-                return 0.90d;
-            }
-            if (_autoCaptureCurrentBucket == AutoCaptureDataBucket.ChaosOcclusion)
-            {
-                return 0.55d;
-            }
-            if (_autoCaptureCurrentBucket == AutoCaptureDataBucket.PureNoise)
-            {
-                return 0d;
-            }
-
-            switch (profile)
-            {
-                case AutoCaptureProfile.AttackHeavy:
-                    return 0.16;
-                case AutoCaptureProfile.HitOcclusionHeavy:
-                    return 0.20;
-                case AutoCaptureProfile.DeathHeavy:
-                    return 0.10;
-                case AutoCaptureProfile.NormalMove:
-                default:
-                    return 0.12;
-            }
-        }
-
-        private void RegisterCaptureSaved(int tick)
-        {
-            _autoCaptureSavedTickWindow.Enqueue(tick);
-            PruneSavedWindows(tick);
-
-            _autoCaptureSavedTickWindow5m.Enqueue(tick);
-            PruneSavedWindows(tick);
-        }
-
-        private void PruneSavedWindows(int tick)
-        {
-            int windowStart10m = tick - AutoCapThroughputWindowMs;
-            while (_autoCaptureSavedTickWindow.Count > 0 && _autoCaptureSavedTickWindow.Peek() < windowStart10m)
-            {
-                _autoCaptureSavedTickWindow.Dequeue();
-            }
-
-            int windowStart5m = tick - AutoCapThroughputWindow5mMs;
-            while (_autoCaptureSavedTickWindow5m.Count > 0 && _autoCaptureSavedTickWindow5m.Peek() < windowStart5m)
-            {
-                _autoCaptureSavedTickWindow5m.Dequeue();
-            }
-        }
-
         private void IncrementAutoCaptureSaveFailReason(string reason)
         {
             string key = string.IsNullOrWhiteSpace(reason) ? "unknown" : reason;
@@ -7197,104 +7025,6 @@ namespace HaCreator.MapSimulator
                 .Take(4)
                 .Select(kv => $"{kv.Key}:{kv.Value}");
             return string.Join("|", pairs);
-        }
-
-        private void TryReportThroughputLow(int tick)
-        {
-            if (!IsAutoCaptureEnabled || _autoCaptureCaptureGuardControl == null)
-            {
-                return;
-            }
-
-            int elapsedSinceStart = unchecked(tick - _autoCaptureStartTick);
-            if (elapsedSinceStart < AutoCapThroughputWindowMs)
-            {
-                return;
-            }
-
-            if (unchecked(tick - _autoCaptureThroughputWarnLastTick) < AutoCapThroughputWarnIntervalMs)
-            {
-                return;
-            }
-
-            int floor = Math.Max(1, _autoCaptureCaptureGuardControl.ThroughputFloorPer10Minutes);
-            PruneSavedWindows(tick);
-            int currentSaved = _autoCaptureSavedTickWindow.Count;
-            if (currentSaved >= floor)
-            {
-                return;
-            }
-
-            _autoCaptureThroughputWarnLastTick = tick;
-            System.Console.WriteLine($@"[AutoCap][Throughput Warning] last_10m_saved={currentSaved} floor={floor} capture_attempted={_autoCaptureCaptureAttempted} capture_saved={_autoCaptureCaptureSaved} capture_skipped_empty={_autoCaptureCaptureSkippedEmpty}");
-
-        }
-
-        private void TryReportThroughput5m(int tick)
-        {
-            if (!IsAutoCaptureEnabled || _autoCaptureCaptureGuardControl == null)
-            {
-                return;
-            }
-
-            int elapsedSinceStart = unchecked(tick - _autoCaptureStartTick);
-            if (elapsedSinceStart < AutoCapThroughputWindow5mMs)
-            {
-                return;
-            }
-
-            if (unchecked(tick - _autoCaptureThroughputWarnLastTick5m) < AutoCapThroughputWarnInterval5mMs)
-            {
-                return;
-            }
-
-            int floor = Math.Max(1, _autoCaptureCaptureGuardControl.ThroughputFloorPer5Minutes);
-            PruneSavedWindows(tick);
-            int savedLast5m = _autoCaptureSavedTickWindow5m.Count;
-            _autoCaptureThroughputWarnLastTick5m = tick;
-
-            if (savedLast5m >= floor)
-            {
-                System.Console.WriteLine(
-                    $"[AutoCap][鍚炲悙閲忕姸鎬乚 saved_last_5m={savedLast5m} floor={floor} status=OK");
-                return;
-            }
-
-            System.Console.WriteLine(
-                $"[AutoCap][鍚炲悙閲忚繃浣嶿 saved_last_5m={savedLast5m} floor={floor} capture_attempted={_autoCaptureCaptureAttempted} capture_saved={_autoCaptureCaptureSaved} capture_skipped_empty={_autoCaptureCaptureSkippedEmpty} save_fail={_autoCaptureSaveFailCount} save_fail_reason={_datasetGenerator?.LastSaveFailureReason ?? "none"}");
-        }
-
-        private int GetDynamicFallbackInjectCapPerWindow(int tick)
-        {
-            int baseCap = AutoCapFallbackInjectCapPerWindow;
-            if (!IsAutoCaptureEnabled || _autoCaptureCaptureGuardControl == null)
-            {
-                return baseCap;
-            }
-
-            PruneSavedWindows(tick);
-            int floor = Math.Max(1, _autoCaptureCaptureGuardControl.ThroughputFloorPer5Minutes);
-            int savedLast5m = _autoCaptureSavedTickWindow5m.Count;
-            double ratio = (double)savedLast5m / floor;
-
-            if (ratio < 0.40d)
-            {
-                return Math.Min(AutoCapFallbackWindowSize, baseCap + 12);
-            }
-            if (ratio < 0.70d)
-            {
-                return Math.Min(AutoCapFallbackWindowSize, baseCap + 8);
-            }
-            if (ratio < 1.00d)
-            {
-                return Math.Min(AutoCapFallbackWindowSize, baseCap + 4);
-            }
-            if (ratio > 1.30d)
-            {
-                return Math.Max(6, baseCap - 4);
-            }
-
-            return baseCap;
         }
 
         private static Rectangle NormalizeHpBarRect(Rectangle hpRect)
