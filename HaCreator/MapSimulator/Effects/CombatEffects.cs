@@ -815,9 +815,9 @@ namespace HaCreator.MapSimulator.Effects
                 LastFrameTime = currentTime
             };
 
-            // Create particle burst
-            int particleCount = isBoss ? 30 : 15;
-            CreateDeathParticles(effect, particleCount);
+            // Disabled the blocky death particles. They were drawing as gray square pixels
+            // which looks unrealistic and confusing, especially since mobs play their own native death animations.
+            // CreateDeathParticles(effect, particleCount);
 
             _deathEffects.Add(effect);
         }

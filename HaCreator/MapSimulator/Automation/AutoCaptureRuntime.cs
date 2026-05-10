@@ -41,16 +41,15 @@ namespace HaCreator.MapSimulator.Automation
         public string ResolutionName { get; set; }
         public string OutputDir { get; set; }
         public string OutputRootDir { get; set; }
-        public int StepX { get; set; } = 96;
-        public int StepY { get; set; } = 96;
-        public int TargetFrames { get; set; } = 120;
-        public int CaptureWarmupMs { get; set; } = 5000;
-        public int CameraTickBudgetOverride { get; set; } = 0;
+        public string JobName { get; set; }
+        public string JobDir { get; set; }
         public float TimeScale { get; set; } = 20f;
         public int Seed { get; set; } = 20260505;
         public bool MuteAudio { get; set; } = true;
         public int WriterThreads { get; set; } = 4;
         public int WriterQueueCapacity { get; set; } = 128;
+        public AutoCaptureCameraPlan CameraPlan { get; set; } =
+            AutoCaptureCameraPlan.CreateDefault();
         public Dictionary<AutoCaptureProfile, int> CaptureProfileMix { get; set; } =
             CreateDefaultProfileMix();
         public AutoCaptureHpBarControl HpBarControl { get; set; } =
@@ -61,8 +60,6 @@ namespace HaCreator.MapSimulator.Automation
             AutoCaptureHitEffectControl.CreateDefault();
         public AutoCaptureRealSkillEffectControl RealSkillEffect { get; set; } =
             AutoCaptureRealSkillEffectControl.CreateDefault();
-        public AutoCaptureCameraLockControl CameraLock { get; set; } =
-            AutoCaptureCameraLockControl.CreateDefault();
         public AutoCaptureCaptureGuardControl CaptureGuard { get; set; } =
             AutoCaptureCaptureGuardControl.CreateDefault();
         public AutoCaptureBucketMix BucketMix { get; set; } =
@@ -123,9 +120,9 @@ namespace HaCreator.MapSimulator.Automation
             return (RealSkillEffect ?? AutoCaptureRealSkillEffectControl.CreateDefault()).Normalize();
         }
 
-        public AutoCaptureCameraLockControl GetNormalizedCameraLockControl()
+        public AutoCaptureCameraPlan GetNormalizedCameraPlan()
         {
-            return (CameraLock ?? AutoCaptureCameraLockControl.CreateDefault()).Normalize();
+            return (CameraPlan ?? AutoCaptureCameraPlan.CreateDefault()).Normalize();
         }
 
         public AutoCaptureCaptureGuardControl GetNormalizedCaptureGuard()
@@ -141,6 +138,73 @@ namespace HaCreator.MapSimulator.Automation
         public AutoCaptureBucketPolicy GetNormalizedBucketPolicy()
         {
             return (BucketPolicy ?? AutoCaptureBucketPolicy.CreateDefault()).Normalize();
+        }
+    }
+
+    internal sealed class AutoCaptureCameraPlan
+    {
+        public string Mode { get; set; } = "fixed_grid_once";
+        public double GridOverlapRatioX { get; set; } = 0.2d;
+        public double GridOverlapRatioY { get; set; } = 0.2d;
+        public string StartCorner { get; set; } = "top_left";
+        public string Traversal { get; set; } = "snake_rows";
+        public int StartupWarmupFrames { get; set; } = 6;
+        public int SettleFrames { get; set; } = 2;
+        public int SampleFramesPerPoint { get; set; } = 4;
+
+        public static AutoCaptureCameraPlan CreateDefault()
+        {
+            return new AutoCaptureCameraPlan();
+        }
+
+        public AutoCaptureCameraPlan Normalize()
+        {
+            string mode = string.IsNullOrWhiteSpace(Mode)
+                ? "fixed_grid_once"
+                : Mode.Trim().ToLowerInvariant();
+            if (!string.Equals(mode, "fixed_grid_once", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("E_AUTOCAP_CAMERA_PLAN_INVALID: camera_plan.mode must be fixed_grid_once.");
+            }
+
+            string startCorner = string.IsNullOrWhiteSpace(StartCorner)
+                ? "top_left"
+                : StartCorner.Trim().ToLowerInvariant();
+            if (!string.Equals(startCorner, "top_left", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("E_AUTOCAP_CAMERA_PLAN_INVALID: camera_plan.start_corner must be top_left.");
+            }
+
+            string traversal = string.IsNullOrWhiteSpace(Traversal)
+                ? "snake_rows"
+                : Traversal.Trim().ToLowerInvariant();
+            if (!string.Equals(traversal, "snake_rows", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("E_AUTOCAP_CAMERA_PLAN_INVALID: camera_plan.traversal must be snake_rows.");
+            }
+
+            double overlapX = Math.Clamp(GridOverlapRatioX, 0d, 0.95d);
+            double overlapY = Math.Clamp(GridOverlapRatioY, 0d, 0.95d);
+            if (Math.Abs(overlapX - GridOverlapRatioX) > 1e-9 || Math.Abs(overlapY - GridOverlapRatioY) > 1e-9)
+            {
+                throw new InvalidOperationException("E_AUTOCAP_CAMERA_PLAN_INVALID: camera_plan overlap ratios must be within [0, 0.95].");
+            }
+
+            int startupWarmupFrames = Math.Max(0, StartupWarmupFrames);
+            int settleFrames = Math.Max(0, SettleFrames);
+            int sampleFramesPerPoint = Math.Max(1, SampleFramesPerPoint);
+
+            return new AutoCaptureCameraPlan
+            {
+                Mode = mode,
+                GridOverlapRatioX = overlapX,
+                GridOverlapRatioY = overlapY,
+                StartCorner = startCorner,
+                Traversal = traversal,
+                StartupWarmupFrames = startupWarmupFrames,
+                SettleFrames = settleFrames,
+                SampleFramesPerPoint = sampleFramesPerPoint
+            };
         }
     }
 
@@ -520,34 +584,6 @@ namespace HaCreator.MapSimulator.Automation
         }
     }
 
-    internal sealed class AutoCaptureCameraLockControl
-    {
-        public bool Enabled { get; set; } = false;
-        public string Anchor { get; set; } = "first_scan_point";
-
-        public static AutoCaptureCameraLockControl CreateDefault()
-        {
-            return new AutoCaptureCameraLockControl();
-        }
-
-        public AutoCaptureCameraLockControl Normalize()
-        {
-            string anchor = string.IsNullOrWhiteSpace(Anchor)
-                ? "first_scan_point"
-                : Anchor.Trim().ToLowerInvariant();
-            if (!string.Equals(anchor, "first_scan_point", StringComparison.Ordinal))
-            {
-                anchor = "first_scan_point";
-            }
-
-            return new AutoCaptureCameraLockControl
-            {
-                Enabled = Enabled,
-                Anchor = anchor
-            };
-        }
-    }
-
     internal sealed class AutoCaptureCaptureGuardControl
     {
         public int ThroughputFloorPer10Minutes { get; set; } = 120;
@@ -555,7 +591,6 @@ namespace HaCreator.MapSimulator.Automation
         public int HpLabelCapPerFrame { get; set; } = 1;
         public double HpUnpairedFallbackProb { get; set; } = 0.02d;
         public double DeathLabelProbInDeathProfile { get; set; } = 0.25d;
-        public int PointMaxAttempts { get; set; } = 8;
         public int[] OffscreenRecoverBackoffMs { get; set; } = new[] { 100, 300, 500 };
         public int MaxConsecutiveCaptureFailuresPerMap { get; set; } = 24;
 
@@ -573,7 +608,6 @@ namespace HaCreator.MapSimulator.Automation
                 HpLabelCapPerFrame = Math.Clamp(HpLabelCapPerFrame, 1, 2),
                 HpUnpairedFallbackProb = Math.Clamp(HpUnpairedFallbackProb, 0d, 1d),
                 DeathLabelProbInDeathProfile = Math.Clamp(DeathLabelProbInDeathProfile, 0d, 1d),
-                PointMaxAttempts = Math.Clamp(PointMaxAttempts, 1, 200),
                 OffscreenRecoverBackoffMs = NormalizeBackoff(OffscreenRecoverBackoffMs),
                 MaxConsecutiveCaptureFailuresPerMap = Math.Clamp(MaxConsecutiveCaptureFailuresPerMap, 1, 10000)
             };
