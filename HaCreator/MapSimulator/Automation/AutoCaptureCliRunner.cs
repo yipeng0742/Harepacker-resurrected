@@ -28,6 +28,7 @@ namespace HaCreator.MapSimulator.Automation
             public DamageNumberControl damage_number_control { get; set; } = new DamageNumberControl();
             public HitEffectControl hit_effect_control { get; set; } = new HitEffectControl();
             public RealSkillEffectControl real_skill_effect { get; set; } = new RealSkillEffectControl();
+            public SkillCatalogControl skill_catalog { get; set; } = new SkillCatalogControl();
             public int seed { get; set; } = 20260505;
             public bool mute_audio { get; set; } = true;
             public WriterControl writer { get; set; } = new WriterControl();
@@ -58,7 +59,6 @@ namespace HaCreator.MapSimulator.Automation
             public int clean_baseline { get; set; } = 20;
             public int anchor_decoupling { get; set; } = 20;
             public int chaos_occlusion { get; set; } = 40;
-            public int pure_noise { get; set; } = 20;
         }
 
         private sealed class BucketPolicy
@@ -124,6 +124,14 @@ namespace HaCreator.MapSimulator.Automation
             public bool enabled { get; set; } = true;
             public string source { get; set; } = "all_skills";
             public string kind { get; set; } = "hit_only";
+        }
+
+        private sealed class SkillCatalogControl
+        {
+            public string path { get; set; } = "AutoCapSkillCatalog.json";
+            public string mode { get; set; } = "curated_only";
+            public string[] allowed_families { get; set; } = Array.Empty<string>();
+            public string[] allowed_occlusion_levels { get; set; } = new[] { "low", "medium", "high" };
         }
 
         private sealed class WriterControl
@@ -215,7 +223,8 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"  profile_mix  : normal_move={job.capture_profile_mix?.normal_move ?? 30}, attack_heavy={job.capture_profile_mix?.attack_heavy ?? 30}, hit_occlusion_heavy={job.capture_profile_mix?.hit_occlusion_heavy ?? 25}, death_heavy={job.capture_profile_mix?.death_heavy ?? 15}");
                 AutoCaptureBucketMix bucketMix = BuildBucketMix(job.bucket_mix);
                 AutoCaptureBucketPolicy bucketPolicy = BuildBucketPolicy(job.bucket_policy);
-                Console.WriteLine($"  bucket_mix   : clean_baseline={bucketMix.CleanBaseline}, anchor_decoupling={bucketMix.AnchorDecoupling}, chaos_occlusion={bucketMix.ChaosOcclusion}, pure_noise={bucketMix.PureNoise}");
+                AutoCaptureSkillCatalogControl skillCatalog = BuildSkillCatalogControl(job.skill_catalog);
+                Console.WriteLine($"  bucket_mix   : clean_baseline={bucketMix.CleanBaseline}, anchor_decoupling={bucketMix.AnchorDecoupling}, chaos_occlusion={bucketMix.ChaosOcclusion}");
                 Console.WriteLine($"  bucket_policy: enforce_dead_mutual_exclusion={bucketPolicy.EnforceDeadMutualExclusion}, stand_move_damage_lag_prob={bucketPolicy.StandMoveDamageLagProb:0.###}, hit_damage_min_prob={bucketPolicy.HitDamageMinProb:0.###}, global_ratio_scope={bucketPolicy.GlobalRatioScope}");
                 AutoCaptureCameraPlan cameraPlan = BuildCameraPlan(job.camera_plan);
                 AutoCaptureDamageNumberControl damageControl = BuildDamageNumberControl(job.damage_number_control);
@@ -228,6 +237,7 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"                 template_style={damageControl.TemplateStyle}, template_weights=single:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Single, 0)},double_tap:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.DoubleTap, 0)},rapid_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.RapidCombo, 0)},stagger_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.StaggerCombo, 0)},finisher:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Finisher, 0)}");
                 Console.WriteLine($"  hit_effect_ctrl: enabled={hitEffectControl.Enabled}, palette={hitEffectControl.PaletteMode}, alpha={hitEffectControl.AlphaMin:0.##}-{hitEffectControl.AlphaMax:0.##}, scale={hitEffectControl.ScaleMin:0.##}-{hitEffectControl.ScaleMax:0.##}, lifetime={hitEffectControl.LifetimeMsMin}-{hitEffectControl.LifetimeMsMax}ms, layers={hitEffectControl.ExtraLayersMin}-{hitEffectControl.ExtraLayersMax}, jitter={hitEffectControl.JitterPxX}x{hitEffectControl.JitterPxY}, variations=[{string.Join(",", hitEffectControl.VariationPool)}]");
                 Console.WriteLine($"  real_skill_fx : enabled={realSkillEffectControl.Enabled}, source={realSkillEffectControl.Source}, kind={realSkillEffectControl.Kind}");
+                Console.WriteLine($"  skill_catalog : mode={skillCatalog.Mode}, path={skillCatalog.Path}, allowed_families=[{string.Join(",", skillCatalog.AllowedFamilies)}], allowed_occlusion_levels=[{string.Join(",", skillCatalog.AllowedOcclusionLevels)}]");
                 var writer = job.writer ?? new WriterControl();
                 int writerThreads = Math.Max(1, writer.threads);
                 int writerQueueCapacity = Math.Max(16, writer.queue_capacity);
@@ -306,7 +316,8 @@ namespace HaCreator.MapSimulator.Automation
                                 BucketPolicy = bucketPolicy,
                                 DamageNumberControl = damageControl,
                                 HitEffectControl = hitEffectControl,
-                                RealSkillEffect = realSkillEffectControl
+                                RealSkillEffect = realSkillEffectControl,
+                                SkillCatalog = skillCatalog
                             };
 
                             Console.WriteLine($"[AutoCap] 开始采集 map={mapId:D9} res={resolutionName}");
@@ -617,8 +628,7 @@ namespace HaCreator.MapSimulator.Automation
             {
                 CleanBaseline = Math.Max(0, mix.clean_baseline),
                 AnchorDecoupling = Math.Max(0, mix.anchor_decoupling),
-                ChaosOcclusion = Math.Max(0, mix.chaos_occlusion),
-                PureNoise = Math.Max(0, mix.pure_noise)
+                ChaosOcclusion = Math.Max(0, mix.chaos_occlusion)
             }.Normalize();
         }
 
@@ -734,6 +744,18 @@ namespace HaCreator.MapSimulator.Automation
                 Enabled = control.enabled,
                 Source = control.source,
                 Kind = control.kind
+            }.Normalize();
+        }
+
+        private static AutoCaptureSkillCatalogControl BuildSkillCatalogControl(SkillCatalogControl control)
+        {
+            control ??= new SkillCatalogControl();
+            return new AutoCaptureSkillCatalogControl
+            {
+                Path = control.path,
+                Mode = control.mode,
+                AllowedFamilies = (control.allowed_families ?? Array.Empty<string>()).ToList(),
+                AllowedOcclusionLevels = (control.allowed_occlusion_levels ?? new[] { "low", "medium", "high" }).ToList()
             }.Normalize();
         }
     }

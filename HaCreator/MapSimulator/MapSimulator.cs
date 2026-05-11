@@ -34,6 +34,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using HaCreator.MapSimulator.Pools;
@@ -224,6 +225,7 @@ namespace HaCreator.MapSimulator
         private AutoCaptureDamageNumberControl _autoCaptureDamageNumberControl = AutoCaptureDamageNumberControl.CreateDefault();
         private AutoCaptureHitEffectControl _autoCaptureHitEffectControl = AutoCaptureHitEffectControl.CreateDefault();
         private AutoCaptureRealSkillEffectControl _autoCaptureRealSkillEffectControl = AutoCaptureRealSkillEffectControl.CreateDefault();
+        private AutoCaptureSkillCatalogControl _autoCaptureSkillCatalog = AutoCaptureSkillCatalogControl.CreateDefault();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketAttempted = new Dictionary<AutoCaptureDataBucket, int>();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketSaved = new Dictionary<AutoCaptureDataBucket, int>();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketAttemptedSnapshot = new Dictionary<AutoCaptureDataBucket, int>();
@@ -234,17 +236,10 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureLastProfileLogFrame = -1;
         private AutoCaptureCameraPlan _autoCaptureCameraPlan = AutoCaptureCameraPlan.CreateDefault();
         private AutoCaptureCameraPhase _autoCaptureCameraPhase = AutoCaptureCameraPhase.Init;
-        private readonly Dictionary<int, int> _autoCaptureHpLastTickByMob = new Dictionary<int, int>();
         private readonly Dictionary<int, int> _autoCaptureDmgLastTickByMob = new Dictionary<int, int>();
-        private int _autoCaptureHpLastGlobalTick = int.MinValue / 2;
         private int _autoCaptureDmgLastGlobalTick = int.MinValue / 2;
-        private int _autoCaptureHpFrameMarker = -1;
         private int _autoCaptureDmgFrameMarker = -1;
-        private int _autoCaptureHpEventsUsedOnCaptureFrame = 0;
         private int _autoCaptureDmgEventsUsedOnCaptureFrame = 0;
-        private int _autoCaptureHpAttempted = 0;
-        private int _autoCaptureHpFired = 0;
-        private int _autoCaptureHpSkippedCooldown = 0;
         private int _autoCaptureDmgAttempted = 0;
         private int _autoCaptureDmgFired = 0;
         private int _autoCaptureDmgSkippedCooldown = 0;
@@ -253,8 +248,15 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureDmgMobsHitCurrentFrame = 0;
         private int _autoCaptureDmgMobsHitPeakSinceLastLog = 0;
         private readonly List<AutoCapNativeDamageSkillEntry> _autoCaptureNativeDamageSkillPool = new List<AutoCapNativeDamageSkillEntry>();
-
-        private int _autoCaptureHpAttemptedSnapshot = 0;
+        private readonly List<AutoCapNativeDamageSkillEntry> _autoCapturePointSkillPool = new List<AutoCapNativeDamageSkillEntry>();
+        private int _autoCapturePointRecipeSeed = 0;
+        private AutoCapDamageTemplate _autoCapturePointDamageTemplate = AutoCapDamageTemplate.Single;
+        private static readonly JsonSerializerOptions AutoCaptureSkillCatalogJsonOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true,
+            WriteIndented = true
+        };
 
         private sealed class AutoCapNativeDamageSkillEntry
         {
@@ -264,11 +266,30 @@ namespace HaCreator.MapSimulator
             public int AttackCount { get; set; }
             public int DamagePercent { get; set; }
             public int CriticalRatePercent { get; set; }
+            public string VisualFamily { get; set; }
+            public string OcclusionLevel { get; set; }
             public int[] SegmentOffsetsMs { get; set; } = Array.Empty<int>();
             public HaCreator.MapSimulator.Character.Skills.SkillAnimation CachedHitEffect { get; set; }
         }
-        private int _autoCaptureHpFiredSnapshot = 0;
-        private int _autoCaptureHpSkippedCooldownSnapshot = 0;
+
+        private sealed class AutoCaptureSkillCatalogDocument
+        {
+            public int Version { get; set; } = 1;
+            public List<AutoCaptureSkillCatalogEntry> Skills { get; set; } = new List<AutoCaptureSkillCatalogEntry>();
+        }
+
+        private sealed class AutoCaptureSkillCatalogEntry
+        {
+            public int SkillId { get; set; }
+            public string Name { get; set; }
+            public bool Enabled { get; set; }
+            public string VisualFamily { get; set; }
+            public string OcclusionLevel { get; set; }
+            public int AttackCount { get; set; }
+            public int DamagePercent { get; set; }
+            public int Job { get; set; }
+        }
+
         private int _autoCaptureDmgAttemptedSnapshot = 0;
         private int _autoCaptureDmgFiredSnapshot = 0;
         private int _autoCaptureDmgSkippedCooldownSnapshot = 0;
@@ -286,9 +307,6 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureSaveFailCount = 0;
         private int _autoCaptureSaveFailCountSnapshot = 0;
         private readonly Dictionary<string, int> _autoCaptureSaveFailByReason = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        private const int HpBarPairingRadiusPx = 220;
-        private const int AutoCapMaxActiveHpBars = 6;
-        private const int AutoCapDeathLabelProbPercent = 25;
         private const int AutoCapViewSafeMarginPx = 80;
         private const int AutoCapClassMobDead = 0;
         private const int AutoCapClassMobActive = 1;
@@ -337,10 +355,8 @@ namespace HaCreator.MapSimulator
         {
             public AutoCaptureProfile Profile { get; set; } = AutoCaptureProfile.NormalMove;
             public bool DisableDamageNumbers { get; set; }
-            public bool DisableHpBars { get; set; }
             public bool DisableHitEffects { get; set; }
             public bool SuppressMobLabels { get; set; }
-            public bool SuppressHpLabels { get; set; }
             public double DamageLagProbOverride { get; set; } = -1d;
             public double HitDamageMinProbOverride { get; set; } = -1d;
             public int HitExtraLayerMaxClamp { get; set; } = -1;
@@ -460,6 +476,7 @@ namespace HaCreator.MapSimulator
             _autoCaptureDamageNumberControl = _autoCaptureOptions.GetNormalizedDamageNumberControl();
             _autoCaptureHitEffectControl = _autoCaptureOptions.GetNormalizedHitEffectControl();
             _autoCaptureRealSkillEffectControl = _autoCaptureOptions.GetNormalizedRealSkillEffectControl();
+            _autoCaptureSkillCatalog = _autoCaptureOptions.GetNormalizedSkillCatalog();
             _autoCaptureCameraPlan = _autoCaptureOptions.GetNormalizedCameraPlan();
             _autoCaptureWarmupFramesRemaining = _autoCaptureCameraPlan.StartupWarmupFrames;
             _autoCaptureSettleFramesRemaining = 0;
@@ -476,23 +493,17 @@ namespace HaCreator.MapSimulator
             _autoCaptureCurrentBucket = SelectBucketByGlobalDeficit();
             _autoCaptureCurrentProfile = SelectProfileForBucket(_autoCaptureCurrentBucket);
             _autoCaptureProfileSwitchTick = Environment.TickCount;
-            _autoCaptureHpLastTickByMob.Clear();
             _autoCaptureDmgLastTickByMob.Clear();
+            _autoCapturePointSkillPool.Clear();
             _autoCaptureBucketAttempted.Clear();
             _autoCaptureBucketSaved.Clear();
             _autoCaptureBucketAttemptedSnapshot.Clear();
             _autoCaptureBucketSavedSnapshot.Clear();
             _autoCaptureLastFrameHasForcedHitState = false;
             _autoCaptureLastFrameDamageEventTriggered = false;
-            _autoCaptureHpLastGlobalTick = int.MinValue / 2;
             _autoCaptureDmgLastGlobalTick = int.MinValue / 2;
-            _autoCaptureHpFrameMarker = -1;
             _autoCaptureDmgFrameMarker = -1;
-            _autoCaptureHpEventsUsedOnCaptureFrame = 0;
             _autoCaptureDmgEventsUsedOnCaptureFrame = 0;
-            _autoCaptureHpAttempted = 0;
-            _autoCaptureHpFired = 0;
-            _autoCaptureHpSkippedCooldown = 0;
             _autoCaptureDmgAttempted = 0;
             _autoCaptureDmgFired = 0;
             _autoCaptureDmgSkippedCooldown = 0;
@@ -500,9 +511,6 @@ namespace HaCreator.MapSimulator
             _autoCaptureDmgMobsHit = 0;
             _autoCaptureDmgMobsHitCurrentFrame = 0;
             _autoCaptureDmgMobsHitPeakSinceLastLog = 0;
-            _autoCaptureHpAttemptedSnapshot = 0;
-            _autoCaptureHpFiredSnapshot = 0;
-            _autoCaptureHpSkippedCooldownSnapshot = 0;
             _autoCaptureDmgAttemptedSnapshot = 0;
             _autoCaptureDmgFiredSnapshot = 0;
             _autoCaptureDmgSkippedCooldownSnapshot = 0;
@@ -622,59 +630,19 @@ namespace HaCreator.MapSimulator
                 _autoCaptureNativeDamageSkillPool.Add(entry);
             }
 
+            string catalogMode = _autoCaptureSkillCatalog?.Mode ?? "curated_only";
+            string catalogPath = ResolveAutoCaptureSkillCatalogPath();
+            ExportAutoCaptureSkillManifest();
+            ExportOrUpdateAutoCaptureSkillCatalog(catalogPath);
+            ApplyAutoCaptureSkillCatalogFilter(catalogPath, catalogMode);
+
             int builtCount = _autoCaptureNativeDamageSkillPool.Count;
             int withEffectCount = _autoCaptureNativeDamageSkillPool.Count(s => s.CachedHitEffect != null);
-            System.Console.WriteLine($"[AutoCap][native_dmg_pool] source={skillSource} scanned={scannedSkillNodes} built={builtCount} with_hit_effect={withEffectCount} total_skills={allSkills.Count} timing_source=flexible reject_not_attack={rejectedAttack} reject_no_levels={rejectedNoLevels} reject_attack_count={rejectedAttackCount} reject_damage={rejectedDamage} reject_timings={rejectedTimings}");
+            System.Console.WriteLine($"[AutoCap][native_dmg_pool] source={skillSource} scanned={scannedSkillNodes} built={builtCount} with_hit_effect={withEffectCount} total_skills={allSkills.Count} timing_source=flexible catalog_mode={catalogMode} catalog_path={catalogPath} reject_not_attack={rejectedAttack} reject_no_levels={rejectedNoLevels} reject_attack_count={rejectedAttackCount} reject_damage={rejectedDamage} reject_timings={rejectedTimings}");
 
             if (builtCount <= 0)
             {
-                throw new InvalidOperationException("[AutoCap][native_dmg_pool] built=0. Aborting per configuration.");
-            }
-
-            // Export skill manifest for user reference
-            try
-            {
-                var manifestLines = new List<string>();
-                manifestLines.Add("# AutoCapture Skill Manifest");
-                manifestLines.Add("");
-                manifestLines.Add("| Skill ID | Chinese Name | Job ID | Is Attack |");
-                manifestLines.Add("| :--- | :--- | :--- | :--- |");
-
-                var sortedPool = _autoCaptureNativeDamageSkillPool
-                    .OrderBy(s => s.SkillId)
-                    .ToList();
-
-                foreach (var entry in sortedPool)
-                {
-                    string skillIdStr = entry.SkillId.ToString();
-                    string skillName = "Unknown Name";
-                    if (Program.InfoManager.SkillNameCache.TryGetValue(skillIdStr, out var nameTuple))
-                    {
-                        skillName = nameTuple.Item1;
-                    }
-                    manifestLines.Add($"| {entry.SkillId} | {skillName} | {entry.Job} | Yes |");
-                }
-
-                if (!string.IsNullOrEmpty(_autoCaptureOptions.JobDir))
-                {
-                    string rootManifestPath = Path.Combine(_autoCaptureOptions.JobDir, "AutoCapSkillManifest.md");
-                    System.IO.File.WriteAllText(rootManifestPath, string.Join(Environment.NewLine, manifestLines), new System.Text.UTF8Encoding(true));
-                    System.Console.WriteLine($"[AutoCap] Skill manifest exported to job directory: {rootManifestPath}");
-                }
-                
-                // Always also export to specific output dir if it exists, for backward compatibility/redundancy
-                if (!string.IsNullOrEmpty(_autoCaptureOptions.OutputDir))
-                {
-                    string manifestPath = Path.Combine(_autoCaptureOptions.OutputDir, "AutoCapSkillManifest.md");
-                    Directory.CreateDirectory(_autoCaptureOptions.OutputDir);
-                    System.IO.File.WriteAllText(manifestPath, string.Join(Environment.NewLine, manifestLines), new System.Text.UTF8Encoding(true));
-                    System.Console.WriteLine($"[AutoCap] Skill manifest exported to: {manifestPath}");
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Console.WriteLine($"[AutoCap] Failed to export skill manifest: {ex.Message}");
-                System.Console.WriteLine(ex.StackTrace);
+                throw new InvalidOperationException("[AutoCap][native_dmg_pool] built=0 after skill catalog filtering. Aborting per configuration.");
             }
         }
 
@@ -736,9 +704,257 @@ namespace HaCreator.MapSimulator
                 AttackCount = levelData.AttackCount,
                 DamagePercent = levelData.Damage,
                 CriticalRatePercent = Math.Max(0, levelData.CriticalRate),
+                VisualFamily = InferAutoCaptureSkillVisualFamily(skill, levelData),
+                OcclusionLevel = InferAutoCaptureSkillOcclusionLevel(skill, levelData),
                 SegmentOffsetsMs = timings
             };
             return true;
+        }
+
+        private string ResolveAutoCaptureSkillCatalogPath()
+        {
+            string relativePath = _autoCaptureSkillCatalog?.Path;
+            string baseDir = !string.IsNullOrWhiteSpace(_autoCaptureOptions.JobDir)
+                ? _autoCaptureOptions.JobDir
+                : _autoCaptureOptions.OutputDir;
+
+            if (string.IsNullOrWhiteSpace(baseDir))
+            {
+                baseDir = Environment.CurrentDirectory;
+            }
+
+            if (string.IsNullOrWhiteSpace(relativePath))
+            {
+                relativePath = "AutoCapSkillCatalog.json";
+            }
+
+            if (Path.IsPathRooted(relativePath))
+            {
+                return relativePath;
+            }
+
+            return Path.Combine(baseDir, relativePath);
+        }
+
+        private void ExportAutoCaptureSkillManifest()
+        {
+            try
+            {
+                var manifestLines = new List<string>
+                {
+                    "# AutoCapture Skill Manifest",
+                    "",
+                    "| Skill ID | Chinese Name | Job ID | Family | Occlusion | AttackCount | Damage |",
+                    "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+                };
+
+                var sortedPool = _autoCaptureNativeDamageSkillPool
+                    .OrderBy(s => s.SkillId)
+                    .ToList();
+
+                foreach (var entry in sortedPool)
+                {
+                    string skillIdStr = entry.SkillId.ToString();
+                    string skillName = "Unknown Name";
+                    if (Program.InfoManager.SkillNameCache.TryGetValue(skillIdStr, out var nameTuple))
+                    {
+                        skillName = nameTuple.Item1;
+                    }
+                    manifestLines.Add(
+                        $"| {entry.SkillId} | {skillName} | {entry.Job} | {entry.VisualFamily} | {entry.OcclusionLevel} | {entry.AttackCount} | {entry.DamagePercent} |");
+                }
+
+                WriteAutoCaptureTextArtifact("AutoCapSkillManifest.md", string.Join(Environment.NewLine, manifestLines));
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap] Failed to export skill manifest: {ex.Message}");
+            }
+        }
+
+        private void ExportOrUpdateAutoCaptureSkillCatalog(string catalogPath)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(catalogPath) ?? Environment.CurrentDirectory);
+
+                var catalog = LoadAutoCaptureSkillCatalog(catalogPath) ?? new AutoCaptureSkillCatalogDocument();
+                var bySkillId = catalog.Skills?.ToDictionary(item => item.SkillId) ??
+                    new Dictionary<int, AutoCaptureSkillCatalogEntry>();
+
+                foreach (var skill in _autoCaptureNativeDamageSkillPool.OrderBy(s => s.SkillId))
+                {
+                    if (bySkillId.TryGetValue(skill.SkillId, out AutoCaptureSkillCatalogEntry existing))
+                    {
+                        existing.Name = skill.Name;
+                        existing.Job = skill.Job;
+                        existing.VisualFamily = skill.VisualFamily;
+                        existing.OcclusionLevel = skill.OcclusionLevel;
+                        existing.AttackCount = skill.AttackCount;
+                        existing.DamagePercent = skill.DamagePercent;
+                    }
+                    else
+                    {
+                        bySkillId[skill.SkillId] = new AutoCaptureSkillCatalogEntry
+                        {
+                            SkillId = skill.SkillId,
+                            Name = skill.Name,
+                            Enabled = false,
+                            VisualFamily = skill.VisualFamily,
+                            OcclusionLevel = skill.OcclusionLevel,
+                            AttackCount = skill.AttackCount,
+                            DamagePercent = skill.DamagePercent,
+                            Job = skill.Job
+                        };
+                    }
+                }
+
+                catalog.Version = 1;
+                catalog.Skills = bySkillId.Values
+                    .OrderBy(item => item.SkillId)
+                    .ToList();
+
+                string json = JsonSerializer.Serialize(catalog, AutoCaptureSkillCatalogJsonOptions);
+                File.WriteAllText(catalogPath, json, new UTF8Encoding(true));
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"E_AUTOCAP_CAMERA_PLAN_INVALID: failed to export skill catalog ({catalogPath}): {ex.Message}");
+            }
+        }
+
+        private AutoCaptureSkillCatalogDocument LoadAutoCaptureSkillCatalog(string catalogPath)
+        {
+            if (string.IsNullOrWhiteSpace(catalogPath) || !File.Exists(catalogPath))
+            {
+                return null;
+            }
+
+            try
+            {
+                string json = File.ReadAllText(catalogPath, Encoding.UTF8);
+                return JsonSerializer.Deserialize<AutoCaptureSkillCatalogDocument>(json, AutoCaptureSkillCatalogJsonOptions);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"E_AUTOCAP_CAMERA_PLAN_INVALID: failed to load skill catalog ({catalogPath}): {ex.Message}");
+            }
+        }
+
+        private void ApplyAutoCaptureSkillCatalogFilter(string catalogPath, string catalogMode)
+        {
+            if (!string.Equals(catalogMode, "curated_only", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var catalog = LoadAutoCaptureSkillCatalog(catalogPath);
+            if (catalog?.Skills == null || catalog.Skills.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"E_AUTOCAP_CAMERA_PLAN_INVALID: skill catalog is empty: {catalogPath}");
+            }
+
+            var allowedFamilies = new HashSet<string>(
+                (_autoCaptureSkillCatalog?.AllowedFamilies ?? new List<string>())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Select(s => s.Trim().ToLowerInvariant()),
+                StringComparer.OrdinalIgnoreCase);
+            var allowedOcclusionLevels = new HashSet<string>(
+                (_autoCaptureSkillCatalog?.AllowedOcclusionLevels ?? new List<string>())
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Select(s => s.Trim().ToLowerInvariant()),
+                StringComparer.OrdinalIgnoreCase);
+
+            var enabledCatalog = catalog.Skills
+                .Where(item => item != null && item.Enabled)
+                .Where(item => allowedFamilies.Count == 0 || allowedFamilies.Contains((item.VisualFamily ?? string.Empty).Trim().ToLowerInvariant()))
+                .Where(item => allowedOcclusionLevels.Count == 0 || allowedOcclusionLevels.Contains((item.OcclusionLevel ?? string.Empty).Trim().ToLowerInvariant()))
+                .ToDictionary(item => item.SkillId);
+
+            _autoCaptureNativeDamageSkillPool.RemoveAll(skill => !enabledCatalog.ContainsKey(skill.SkillId));
+            if (_autoCaptureNativeDamageSkillPool.Count <= 0)
+            {
+                throw new InvalidOperationException(
+                    $"E_AUTOCAP_CAMERA_PLAN_INVALID: no enabled skills remain after curated filtering ({catalogPath}).");
+            }
+        }
+
+        private void WriteAutoCaptureTextArtifact(string fileName, string content)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                return;
+            }
+
+            var targetDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(_autoCaptureOptions.JobDir))
+            {
+                targetDirs.Add(_autoCaptureOptions.JobDir);
+            }
+            if (!string.IsNullOrWhiteSpace(_autoCaptureOptions.OutputDir))
+            {
+                targetDirs.Add(_autoCaptureOptions.OutputDir);
+            }
+
+            foreach (string dir in targetDirs)
+            {
+                try
+                {
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllText(Path.Combine(dir, fileName), content, new UTF8Encoding(true));
+                }
+                catch (Exception ex)
+                {
+                    System.Console.WriteLine($"[AutoCap] Failed to write artifact {fileName} to {dir}: {ex.Message}");
+                }
+            }
+        }
+
+        private static string InferAutoCaptureSkillVisualFamily(SkillData skill, SkillLevelData levelData)
+        {
+            string name = $"{skill?.Name} {skill?.SkillId}".ToLowerInvariant();
+            int attackCount = Math.Max(1, levelData?.AttackCount ?? 1);
+            if (name.Contains("laser") || name.Contains("beam"))
+            {
+                return "beam";
+            }
+            if (name.Contains("arrow") || name.Contains("bullet") || name.Contains("shot"))
+            {
+                return "projectile";
+            }
+            if (name.Contains("slash") || name.Contains("swing") || name.Contains("blade"))
+            {
+                return "slash";
+            }
+            if (name.Contains("bomb") || name.Contains("blast") || name.Contains("explosion"))
+            {
+                return "burst";
+            }
+            if (attackCount >= 5)
+            {
+                return "combo";
+            }
+            return "impact";
+        }
+
+        private static string InferAutoCaptureSkillOcclusionLevel(SkillData skill, SkillLevelData levelData)
+        {
+            int attackCount = Math.Max(1, levelData?.AttackCount ?? 1);
+            int damage = Math.Max(0, levelData?.Damage ?? 0);
+            bool hasHitEffect = skill?.HitEffect != null && skill.HitEffect.Frames != null && skill.HitEffect.Frames.Count > 0;
+
+            if (attackCount >= 5 || damage >= 260 || (hasHitEffect && attackCount >= 4))
+            {
+                return "high";
+            }
+            if (attackCount >= 3 || damage >= 160)
+            {
+                return "medium";
+            }
+            return "low";
         }
 
         private static int[] TryResolveNativeSkillSegmentOffsets(SkillData skill, int attackCount)
@@ -1235,7 +1451,6 @@ namespace HaCreator.MapSimulator
                 AutoCaptureDataBucket.CleanBaseline => "A",
                 AutoCaptureDataBucket.AnchorDecoupling => "B",
                 AutoCaptureDataBucket.ChaosOcclusion => "C",
-                AutoCaptureDataBucket.PureNoise => "D",
                 _ => "A"
             };
         }
@@ -1369,7 +1584,6 @@ namespace HaCreator.MapSimulator
                     }
                     return AutoCaptureProfile.DeathHeavy;
                 }
-                case AutoCaptureDataBucket.PureNoise:
                 default:
                     return AutoCaptureProfile.HitOcclusionHeavy;
             }
@@ -1385,7 +1599,6 @@ namespace HaCreator.MapSimulator
             {
                 case AutoCaptureDataBucket.CleanBaseline:
                     tuning.DisableDamageNumbers = true;
-                    tuning.DisableHpBars = true;
                     tuning.DisableHitEffects = true;
                     tuning.DamageLagProbOverride = 0d;
                     break;
@@ -1397,11 +1610,6 @@ namespace HaCreator.MapSimulator
                     tuning.HitDamageMinProbOverride = Math.Max(
                         0.90d,
                         _autoCaptureBucketPolicy?.HitDamageMinProb ?? 0.90d);
-                    break;
-                case AutoCaptureDataBucket.PureNoise:
-                    tuning.SuppressMobLabels = true;
-                    tuning.SuppressHpLabels = true;
-                    tuning.HitExtraLayerMaxClamp = Math.Max(2, _autoCaptureHitEffectControl?.ExtraLayersMax ?? 2);
                     break;
             }
             return tuning;
@@ -1417,6 +1625,63 @@ namespace HaCreator.MapSimulator
             _autoCaptureCurrentBucket = SelectBucketByGlobalDeficit();
             _autoCaptureCurrentProfile = SelectProfileForBucket(_autoCaptureCurrentBucket);
             _autoCaptureProfileSwitchTick = Environment.TickCount;
+            _autoCapturePointRecipeSeed = _autoCaptureRandom.Next();
+            _autoCapturePointDamageTemplate = PickAutoCapDamageTemplate(_autoCaptureCurrentProfile);
+            RebuildAutoCapturePointSkillPool();
+        }
+
+        private void RebuildAutoCapturePointSkillPool()
+        {
+            _autoCapturePointSkillPool.Clear();
+            if (_autoCaptureNativeDamageSkillPool.Count <= 0)
+            {
+                return;
+            }
+
+            string targetOcclusion = ResolvePointOcclusionLevel(_autoCaptureCurrentProfile, _autoCaptureCurrentBucket);
+            IEnumerable<AutoCapNativeDamageSkillEntry> filtered = _autoCaptureNativeDamageSkillPool
+                .Where(skill => string.Equals(skill.OcclusionLevel, targetOcclusion, StringComparison.OrdinalIgnoreCase));
+
+            if (!filtered.Any())
+            {
+                filtered = _autoCaptureNativeDamageSkillPool;
+            }
+
+            int takeCount = _autoCaptureCurrentProfile switch
+            {
+                AutoCaptureProfile.NormalMove => 2,
+                AutoCaptureProfile.AttackHeavy => 3,
+                AutoCaptureProfile.HitOcclusionHeavy => 4,
+                AutoCaptureProfile.DeathHeavy => 2,
+                _ => 2
+            };
+
+            foreach (var skill in filtered.OrderBy(_ => _autoCaptureRandom.Next()).Take(takeCount))
+            {
+                _autoCapturePointSkillPool.Add(skill);
+            }
+
+            if (_autoCapturePointSkillPool.Count == 0)
+            {
+                _autoCapturePointSkillPool.Add(_autoCaptureNativeDamageSkillPool[_autoCaptureRandom.Next(_autoCaptureNativeDamageSkillPool.Count)]);
+            }
+        }
+
+        private static string ResolvePointOcclusionLevel(AutoCaptureProfile profile, AutoCaptureDataBucket bucket)
+        {
+            if (profile == AutoCaptureProfile.NormalMove)
+            {
+                return "low";
+            }
+            if (profile == AutoCaptureProfile.AttackHeavy)
+            {
+                return "medium";
+            }
+            if (profile == AutoCaptureProfile.HitOcclusionHeavy || bucket == AutoCaptureDataBucket.ChaosOcclusion)
+            {
+                return "high";
+            }
+            return "medium";
         }
 
         private bool IsDeadMutualExclusionEnabled()
@@ -1502,9 +1767,6 @@ namespace HaCreator.MapSimulator
             if (capturedFrames > 0 && capturedFrames % 30 == 0 && capturedFrames != _autoCaptureLastProfileLogFrame)
             {
                 _autoCaptureLastProfileLogFrame = capturedFrames;
-                int hpAttemptedDelta = _autoCaptureHpAttempted - _autoCaptureHpAttemptedSnapshot;
-                int hpFiredDelta = _autoCaptureHpFired - _autoCaptureHpFiredSnapshot;
-                int hpSkippedDelta = _autoCaptureHpSkippedCooldown - _autoCaptureHpSkippedCooldownSnapshot;
                 int dmgAttemptedDelta = _autoCaptureDmgAttempted - _autoCaptureDmgAttemptedSnapshot;
                 int dmgFiredDelta = _autoCaptureDmgFired - _autoCaptureDmgFiredSnapshot;
                 int dmgSkippedDelta = _autoCaptureDmgSkippedCooldown - _autoCaptureDmgSkippedCooldownSnapshot;
@@ -1519,16 +1781,11 @@ namespace HaCreator.MapSimulator
                 int bucketAttemptA = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.CleanBaseline) - GetBucketCount(_autoCaptureBucketAttemptedSnapshot, AutoCaptureDataBucket.CleanBaseline);
                 int bucketAttemptB = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.AnchorDecoupling) - GetBucketCount(_autoCaptureBucketAttemptedSnapshot, AutoCaptureDataBucket.AnchorDecoupling);
                 int bucketAttemptC = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.ChaosOcclusion) - GetBucketCount(_autoCaptureBucketAttemptedSnapshot, AutoCaptureDataBucket.ChaosOcclusion);
-                int bucketAttemptD = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.PureNoise) - GetBucketCount(_autoCaptureBucketAttemptedSnapshot, AutoCaptureDataBucket.PureNoise);
                 int bucketSavedA = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.CleanBaseline) - GetBucketCount(_autoCaptureBucketSavedSnapshot, AutoCaptureDataBucket.CleanBaseline);
                 int bucketSavedB = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.AnchorDecoupling) - GetBucketCount(_autoCaptureBucketSavedSnapshot, AutoCaptureDataBucket.AnchorDecoupling);
                 int bucketSavedC = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.ChaosOcclusion) - GetBucketCount(_autoCaptureBucketSavedSnapshot, AutoCaptureDataBucket.ChaosOcclusion);
-                int bucketSavedD = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.PureNoise) - GetBucketCount(_autoCaptureBucketSavedSnapshot, AutoCaptureDataBucket.PureNoise);
                 string saveFailReason = _datasetGenerator?.LastSaveFailureReason ?? "none";
                 string saveFailByReason = FormatSaveFailReasonStats();
-                _autoCaptureHpAttemptedSnapshot = _autoCaptureHpAttempted;
-                _autoCaptureHpFiredSnapshot = _autoCaptureHpFired;
-                _autoCaptureHpSkippedCooldownSnapshot = _autoCaptureHpSkippedCooldown;
                 _autoCaptureDmgAttemptedSnapshot = _autoCaptureDmgAttempted;
                 _autoCaptureDmgFiredSnapshot = _autoCaptureDmgFired;
                 _autoCaptureDmgSkippedCooldownSnapshot = _autoCaptureDmgSkippedCooldown;
@@ -1549,7 +1806,7 @@ namespace HaCreator.MapSimulator
                 int scanIdx = _autoCaptureCurrentPointIndex + 1;
                 int scanTotal = _autoCaptureScanPath?.Count ?? 0;
                 System.Console.WriteLine(
-                    $"[AutoCap][采集摘要] frame={capturedFrames} point_idx={scanIdx} point_total={scanTotal} sampled_frames_at_point={_autoCaptureSampledFramesAtPoint} phase={_autoCaptureCameraPhase} bucket={GetBucketCode(_autoCaptureCurrentBucket)} profile={_autoCaptureCurrentProfile} capture_attempted={capAttemptedDelta} saved={capSavedDelta} skipped_empty={capSkippedEmptyDelta} bucket_attempted=A:{bucketAttemptA},B:{bucketAttemptB},C:{bucketAttemptC},D:{bucketAttemptD} bucket_saved=A:{bucketSavedA},B:{bucketSavedB},C:{bucketSavedC},D:{bucketSavedD} bounds_raw={boundsRawDelta} bounds_usable={boundsUsableDelta} save_fail={saveFailDelta} save_fail_reason={saveFailReason} save_fail_by_reason={saveFailByReason} save_rate={saveRate:0.000} hp_event_attempted={hpAttemptedDelta} hp_event_fired={hpFiredDelta} hp_event_skipped_cooldown={hpSkippedDelta} hp_active_mobs={_effectManager?.Combat?.ActiveMobHPBars ?? 0} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
+                    $"[AutoCap][采集摘要] frame={capturedFrames} point_idx={scanIdx} point_total={scanTotal} sampled_frames_at_point={_autoCaptureSampledFramesAtPoint} phase={_autoCaptureCameraPhase} bucket={GetBucketCode(_autoCaptureCurrentBucket)} profile={_autoCaptureCurrentProfile} capture_attempted={capAttemptedDelta} saved={capSavedDelta} skipped_empty={capSkippedEmptyDelta} bucket_attempted=A:{bucketAttemptA},B:{bucketAttemptB},C:{bucketAttemptC} bucket_saved=A:{bucketSavedA},B:{bucketSavedB},C:{bucketSavedC} bounds_raw={boundsRawDelta} bounds_usable={boundsUsableDelta} save_fail={saveFailDelta} save_fail_reason={saveFailReason} save_fail_by_reason={saveFailByReason} save_rate={saveRate:0.000} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
             }
             var combat = _effectManager?.Combat;
             var forceStateMobs = new List<MobItem>();
@@ -1565,13 +1822,14 @@ namespace HaCreator.MapSimulator
             foreach (var mob in _mobPool.ActiveMobs)
             {
                 bool hasForcedState = false;
+                Random pointRandom = new Random(_autoCapturePointRecipeSeed ^ mob.PoolId ^ (_autoCaptureCurrentPointIndex + 1));
                 switch (_autoCaptureCurrentProfile)
                 {
                     case AutoCaptureProfile.NormalMove:
                     {
-                        if (_autoCaptureRandom.NextDouble() < 0.35)
+                        if (pointRandom.NextDouble() < 0.35)
                         {
-                            string moveAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "move", "walk", "fly", "jump", "stand");
+                            string moveAction = mob.PickRandomActionByPrefixes(pointRandom, "move", "walk", "fly", "jump", "stand");
                             if (!string.IsNullOrEmpty(moveAction))
                             {
                                 mob.ForceStateForDataset(moveAction);
@@ -1586,9 +1844,9 @@ namespace HaCreator.MapSimulator
                     }
                     case AutoCaptureProfile.AttackHeavy:
                     {
-                        if (_autoCaptureRandom.NextDouble() < 0.90)
+                        if (pointRandom.NextDouble() < 0.90)
                         {
-                            string attackAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "attack", "skill", "magic", "cast");
+                            string attackAction = mob.PickRandomActionByPrefixes(pointRandom, "attack", "skill", "magic", "cast");
                             if (!string.IsNullOrEmpty(attackAction))
                             {
                                 mob.ForceStateForDataset(attackAction);
@@ -1603,9 +1861,9 @@ namespace HaCreator.MapSimulator
                     }
                     case AutoCaptureProfile.HitOcclusionHeavy:
                     {
-                        if (_autoCaptureRandom.NextDouble() < 0.45)
+                        if (pointRandom.NextDouble() < 0.45)
                         {
-                            string hitAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "hit", "damage", "dam");
+                            string hitAction = mob.PickRandomActionByPrefixes(pointRandom, "hit", "damage", "dam");
                             if (!string.IsNullOrEmpty(hitAction))
                             {
                                 mob.ForceStateForDataset(hitAction);
@@ -1624,9 +1882,9 @@ namespace HaCreator.MapSimulator
                     case AutoCaptureProfile.DeathHeavy:
                     {
                         bool forcedDead = false;
-                        if (_autoCaptureRandom.NextDouble() < 0.80)
+                        if (pointRandom.NextDouble() < 0.80)
                         {
-                            string dieAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "die", "dead", "death");
+                            string dieAction = mob.PickRandomActionByPrefixes(pointRandom, "die", "dead", "death");
                             if (!string.IsNullOrEmpty(dieAction))
                             {
                                 mob.ForceStateForDataset(dieAction);
@@ -1635,9 +1893,9 @@ namespace HaCreator.MapSimulator
                             }
                         }
 
-                        if (!forcedDead && _autoCaptureRandom.NextDouble() < 0.20)
+                        if (!forcedDead && pointRandom.NextDouble() < 0.20)
                         {
-                            string hitAction = mob.PickRandomActionByPrefixes(_autoCaptureRandom, "hit", "damage", "dam");
+                            string hitAction = mob.PickRandomActionByPrefixes(pointRandom, "hit", "damage", "dam");
                             if (!string.IsNullOrEmpty(hitAction))
                             {
                                 mob.ForceStateForDataset(hitAction);
@@ -1649,7 +1907,7 @@ namespace HaCreator.MapSimulator
                             }
                         }
 
-                        if (combat != null && forcedDead && _autoCaptureRandom.NextDouble() < 0.25)
+                        if (combat != null && forcedDead && pointRandom.NextDouble() < 0.25)
                         {
                             combat.AddDeathEffectForMob(mob, tick);
                         }
@@ -1698,13 +1956,8 @@ namespace HaCreator.MapSimulator
                 _autoCaptureDmgEventsUsedOnCaptureFrame = 0;
                 _autoCaptureDmgMobsHitCurrentFrame = 0;
             }
-            if (tick != _autoCaptureHpFrameMarker)
-            {
-                _autoCaptureHpFrameMarker = tick;
-                _autoCaptureHpEventsUsedOnCaptureFrame = 0;
-            }
 
-            var candidates = BuildHpEventCandidates(forceStateMobs, fallbackMobs);
+            var candidates = BuildDamageEventCandidates(forceStateMobs, fallbackMobs);
             if (candidates.Count == 0)
             {
                 // Fallback: when strict in-view filter empties out, keep a weak fallback
@@ -1726,13 +1979,8 @@ namespace HaCreator.MapSimulator
 
             int targetMobCount = ResolveDynamicBoundEventFrameLimit(candidates.Count);
             int availableByFrame = Math.Max(0, targetMobCount - _autoCaptureDmgEventsUsedOnCaptureFrame);
-            int availableByHpFrame = Math.Max(0, targetMobCount - _autoCaptureHpEventsUsedOnCaptureFrame);
             int availableByDmgHard = Math.Max(0, _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame - _autoCaptureDmgEventsUsedOnCaptureFrame);
-            int availableByHpHard = Math.Max(0, 6 - _autoCaptureHpEventsUsedOnCaptureFrame);
-            int availableByActiveHp = Math.Max(0, AutoCapMaxActiveHpBars - combat.ActiveMobHPBars);
-            int maxTargetMobs = Math.Min(
-                Math.Min(Math.Min(availableByFrame, availableByHpFrame), Math.Min(availableByDmgHard, availableByHpHard)),
-                availableByActiveHp);
+            int maxTargetMobs = Math.Min(availableByFrame, availableByDmgHard);
             if (maxTargetMobs <= 0)
             {
                 return;
@@ -1740,7 +1988,6 @@ namespace HaCreator.MapSimulator
             int selectedMobCount = Math.Min(Math.Min(targetMobCount, maxTargetMobs), Math.Min(6, candidates.Count));
 
             double damageProb = _autoCaptureDamageNumberControl.GetProbability(_autoCaptureCurrentProfile);
-            double hpProb = 0d;
             bool hasHitState = _autoCaptureLastFrameHasForcedHitState;
             bool standMoveOnly = !hasHitState && forceStateMobs != null && forceStateMobs.All(m => m == null || IsStandMoveLikeAction(m.CurrentAction));
             if (hasHitState)
@@ -1753,9 +2000,8 @@ namespace HaCreator.MapSimulator
                 double lagProb = tuning?.DamageLagProbOverride ?? (_autoCaptureBucketPolicy?.StandMoveDamageLagProb ?? 0.03d);
                 damageProb = Math.Min(damageProb, Math.Clamp(lagProb, 0d, 1d));
             }
-            double boundProb = Math.Min(damageProb, hpProb);
             bool forceByTimeout = unchecked(tick - _autoCaptureDmgLastGlobalTick) > 1200;
-            if (!forceByTimeout && _autoCaptureRandom.NextDouble() >= boundProb)
+            if (!forceByTimeout && _autoCaptureRandom.NextDouble() >= damageProb)
             {
                 return;
             }
@@ -1782,8 +2028,14 @@ namespace HaCreator.MapSimulator
                 {
                     continue;
                 }
+                if (!CanFireDamageEventForMob(mob, tick))
+                {
+                    _autoCaptureDmgSkippedCooldown++;
+                    continue;
+                }
 
-                var damageTemplate = PickAutoCapDamageTemplate(_autoCaptureCurrentProfile);
+                _autoCaptureDmgAttempted++;
+                var damageTemplate = _autoCapturePointDamageTemplate;
                 int segmentCount = ResolveSegmentCountByTemplate(damageTemplate);
                 int availableByActiveDmg = Math.Max(0, _autoCaptureDamageNumberControl.MaxActiveNumbers - combat.ActiveDamageNumbers);
                 if (availableByActiveDmg <= 0)
@@ -1797,8 +2049,7 @@ namespace HaCreator.MapSimulator
                 int maxSegmentOffset = 0;
                 for (int burst = 0; burst < segmentCount; burst++)
                 {
-                    if (combat.ActiveDamageNumbers >= _autoCaptureDamageNumberControl.MaxActiveNumbers ||
-                        combat.ActiveMobHPBars >= AutoCapMaxActiveHpBars)
+                    if (combat.ActiveDamageNumbers >= _autoCaptureDamageNumberControl.MaxActiveNumbers)
                     {
                         break;
                     }
@@ -1820,7 +2071,11 @@ namespace HaCreator.MapSimulator
                     if ((tuning?.DisableHitEffects != true) && (_autoCaptureHitEffectControl?.Enabled != false))
                     {
                         AutoCapNativeDamageSkillEntry selectedSkill = null;
-                        if (_autoCaptureNativeDamageSkillPool.Count > 0)
+                        if (_autoCapturePointSkillPool.Count > 0)
+                        {
+                            selectedSkill = _autoCapturePointSkillPool[_autoCaptureRandom.Next(_autoCapturePointSkillPool.Count)];
+                        }
+                        else if (_autoCaptureNativeDamageSkillPool.Count > 0)
                         {
                             selectedSkill = _autoCaptureNativeDamageSkillPool[_autoCaptureRandom.Next(_autoCaptureNativeDamageSkillPool.Count)];
                         }
@@ -1912,14 +2167,10 @@ namespace HaCreator.MapSimulator
                         isCritical,
                         eventTick,
                         comboIndex);
-                    combat.OnMobDamaged(mob, eventTick);
 
                     _autoCaptureDmgLastGlobalTick = eventTick;
                     _autoCaptureDmgLastTickByMob[mob.PoolId] = eventTick;
                     _autoCaptureDmgFired++;
-                    _autoCaptureHpLastGlobalTick = eventTick;
-                    _autoCaptureHpLastTickByMob[mob.PoolId] = eventTick;
-                    _autoCaptureHpFired++;
                     _autoCaptureDmgSegmentsEmitted++;
                     emittedForMob++;
                 }
@@ -1927,9 +2178,7 @@ namespace HaCreator.MapSimulator
                 if (emittedForMob > 0)
                 {
                     _autoCaptureDmgLastGlobalTick = tick;
-                    _autoCaptureHpLastGlobalTick = tick;
                     _autoCaptureDmgEventsUsedOnCaptureFrame++;
-                    _autoCaptureHpEventsUsedOnCaptureFrame++;
                     _autoCaptureDmgMobsHit++;
                     _autoCaptureLastFrameDamageEventTriggered = true;
                     _autoCaptureDmgMobsHitCurrentFrame++;
@@ -2269,7 +2518,7 @@ namespace HaCreator.MapSimulator
             return _autoCaptureRandom.NextDouble() < Math.Clamp(chance, 0.05d, 0.65d);
         }
 
-        private List<MobItem> BuildHpEventCandidates(List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)
+        private List<MobItem> BuildDamageEventCandidates(List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)
         {
             var list = new List<MobItem>();
             if (forceStateMobs != null && forceStateMobs.Count > 0)
@@ -4677,7 +4926,10 @@ namespace HaCreator.MapSimulator
             // Update combat effects (damage numbers, hit effects, HP bars)
             _combatEffects.Update(currTickCount, deltaSeconds);
             _combatEffects.SyncFromMobPool(_mobPool, currTickCount);
-            _combatEffects.SyncHPBarsFromMobPool(_mobPool, currTickCount);
+            if (!IsAutoCaptureEnabled)
+            {
+                _combatEffects.SyncHPBarsFromMobPool(_mobPool, currTickCount);
+            }
 
             // Update particle system
             _particleSystem.Update(currTickCount, deltaSeconds);
@@ -6824,47 +7076,6 @@ namespace HaCreator.MapSimulator
                         if (!bucketTuning.SuppressMobLabels && _mobPool != null)
                         {
                             // 闅忔満娉ㄥ叆姝讳骸鏍囩浠ュ寮烘牱鏈?diversity (浠呭湪 DeathHeavy 妯″紡涓?
-                            if (_autoCaptureCurrentProfile == AutoCaptureProfile.DeathHeavy &&
-                                _autoCaptureRandom.NextDouble() < (AutoCapDeathLabelProbPercent / 100d))
-                            {
-                                int deadAdded = 0;
-                                foreach (var mob in _mobPool.DyingMobs)
-                                {
-                                    var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
-                                    if (rect == null)
-                                    {
-                                        continue;
-                                    }
-
-                                    boundsList.Add((AutoCapClassMobDead, rect.Value));
-                                    deadAdded++;
-                                    if (deadAdded >= 1)
-                                    {
-                                        break;
-                                    }
-                                }
-
-                                if (deadAdded == 0)
-                                {
-                                    foreach (var mob in _mobPool.ActiveMobs)
-                                    {
-                                        if (mob == null || !IsDeathLikeAction(mob.CurrentAction))
-                                        {
-                                            continue;
-                                        }
-
-                                        var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
-                                        if (rect == null)
-                                        {
-                                            continue;
-                                        }
-
-                                        boundsList.Add((AutoCapClassMobDead, rect.Value));
-                                        break;
-                                    }
-                                }
-
-                            }
                         }
 
                         // Get HP bars bounds removed per refactoring (labels/0.txt no longer contains class 2).
@@ -6938,37 +7149,6 @@ namespace HaCreator.MapSimulator
             base.Draw(gameTime);
         }
 
-        private static bool HasNearbyMobBox(List<(int classId, Rectangle bounds)> boundsList, Rectangle hpRect, int radiusPx)
-        {
-            if (boundsList == null || boundsList.Count == 0)
-            {
-                return false;
-            }
-
-            int hpCenterX = hpRect.Left + hpRect.Width / 2;
-            int hpCenterY = hpRect.Top + hpRect.Height / 2;
-            int r2 = radiusPx * radiusPx;
-
-            foreach (var (classId, rect) in boundsList)
-            {
-                if (classId != AutoCapClassMobActive)
-                {
-                    continue;
-                }
-
-                int mobCenterX = rect.Left + rect.Width / 2;
-                int mobCenterY = rect.Top + rect.Height / 2;
-                int dx = hpCenterX - mobCenterX;
-                int dy = hpCenterY - mobCenterY;
-                int d2 = dx * dx + dy * dy;
-                if (d2 <= r2)
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         private static bool HasAnyClassId(List<(int classId, Rectangle bounds)> boundsList, int classId)
         {
             if (boundsList == null || boundsList.Count == 0)
@@ -7025,41 +7205,6 @@ namespace HaCreator.MapSimulator
                 .Take(4)
                 .Select(kv => $"{kv.Key}:{kv.Value}");
             return string.Join("|", pairs);
-        }
-
-        private static Rectangle NormalizeHpBarRect(Rectangle hpRect)
-        {
-            const int MinHpWidth = 10;
-            const int MinHpHeight = 4;
-            int width = Math.Max(MinHpWidth, hpRect.Width);
-            int height = Math.Max(MinHpHeight, hpRect.Height);
-            int centerX = hpRect.Left + hpRect.Width / 2;
-            int centerY = hpRect.Top + hpRect.Height / 2;
-            int left = centerX - width / 2;
-            int top = centerY - height / 2;
-            return new Rectangle(left, top, width, height);
-        }
-
-        private Rectangle JitterHpBarRectForAnchorDecoupling(Rectangle hpRect)
-        {
-            if (_autoCaptureRandom == null)
-            {
-                return hpRect;
-            }
-
-            int width = hpRect.Width;
-            if (width > 0)
-            {
-                double scale = 0.2d + (_autoCaptureRandom.NextDouble() * 0.9d);
-                width = Math.Max(8, (int)Math.Round(width * scale));
-            }
-
-            int height = Math.Max(4, hpRect.Height);
-            int centerX = hpRect.Left + (hpRect.Width / 2) + _autoCaptureRandom.Next(-4, 5);
-            int centerY = hpRect.Top + (hpRect.Height / 2) + _autoCaptureRandom.Next(-3, 4);
-            int left = centerX - (width / 2);
-            int top = centerY - (height / 2);
-            return new Rectangle(left, top, width, height);
         }
 
         private static Rectangle ClampRectToFrame(Rectangle rect, int width, int height)

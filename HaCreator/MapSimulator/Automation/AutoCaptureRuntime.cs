@@ -16,8 +16,7 @@ namespace HaCreator.MapSimulator.Automation
     {
         CleanBaseline,
         AnchorDecoupling,
-        ChaosOcclusion,
-        PureNoise
+        ChaosOcclusion
     }
 
     internal enum AutoCaptureDamageTemplateStyle
@@ -58,6 +57,8 @@ namespace HaCreator.MapSimulator.Automation
             AutoCaptureHitEffectControl.CreateDefault();
         public AutoCaptureRealSkillEffectControl RealSkillEffect { get; set; } =
             AutoCaptureRealSkillEffectControl.CreateDefault();
+        public AutoCaptureSkillCatalogControl SkillCatalog { get; set; } =
+            AutoCaptureSkillCatalogControl.CreateDefault();
         public AutoCaptureBucketMix BucketMix { get; set; } =
             AutoCaptureBucketMix.CreateDefault();
         public AutoCaptureBucketPolicy BucketPolicy { get; set; } =
@@ -67,10 +68,10 @@ namespace HaCreator.MapSimulator.Automation
         {
             return new Dictionary<AutoCaptureProfile, int>
             {
-                [AutoCaptureProfile.NormalMove] = 30,
-                [AutoCaptureProfile.AttackHeavy] = 30,
-                [AutoCaptureProfile.HitOcclusionHeavy] = 25,
-                [AutoCaptureProfile.DeathHeavy] = 15
+                [AutoCaptureProfile.NormalMove] = 40,
+                [AutoCaptureProfile.AttackHeavy] = 35,
+                [AutoCaptureProfile.HitOcclusionHeavy] = 15,
+                [AutoCaptureProfile.DeathHeavy] = 10
             };
         }
 
@@ -114,6 +115,11 @@ namespace HaCreator.MapSimulator.Automation
         public AutoCaptureCameraPlan GetNormalizedCameraPlan()
         {
             return (CameraPlan ?? AutoCaptureCameraPlan.CreateDefault()).Normalize();
+        }
+
+        public AutoCaptureSkillCatalogControl GetNormalizedSkillCatalog()
+        {
+            return (SkillCatalog ?? AutoCaptureSkillCatalogControl.CreateDefault()).Normalize();
         }
 
         public AutoCaptureBucketMix GetNormalizedBucketMix()
@@ -198,8 +204,7 @@ namespace HaCreator.MapSimulator.Automation
     {
         public int CleanBaseline { get; set; } = 20;
         public int AnchorDecoupling { get; set; } = 20;
-        public int ChaosOcclusion { get; set; } = 40;
-        public int PureNoise { get; set; } = 20;
+        public int ChaosOcclusion { get; set; } = 60;
 
         public static AutoCaptureBucketMix CreateDefault()
         {
@@ -211,8 +216,7 @@ namespace HaCreator.MapSimulator.Automation
             int clean = Math.Max(0, CleanBaseline);
             int anchor = Math.Max(0, AnchorDecoupling);
             int chaos = Math.Max(0, ChaosOcclusion);
-            int noise = Math.Max(0, PureNoise);
-            int total = clean + anchor + chaos + noise;
+            int total = clean + anchor + chaos;
             if (total <= 0)
             {
                 return CreateDefault();
@@ -222,8 +226,7 @@ namespace HaCreator.MapSimulator.Automation
             {
                 CleanBaseline = clean,
                 AnchorDecoupling = anchor,
-                ChaosOcclusion = chaos,
-                PureNoise = noise
+                ChaosOcclusion = chaos
             };
         }
 
@@ -234,7 +237,6 @@ namespace HaCreator.MapSimulator.Automation
                 AutoCaptureDataBucket.CleanBaseline => Math.Max(0, CleanBaseline),
                 AutoCaptureDataBucket.AnchorDecoupling => Math.Max(0, AnchorDecoupling),
                 AutoCaptureDataBucket.ChaosOcclusion => Math.Max(0, ChaosOcclusion),
-                AutoCaptureDataBucket.PureNoise => Math.Max(0, PureNoise),
                 _ => 0
             };
         }
@@ -298,8 +300,8 @@ namespace HaCreator.MapSimulator.Automation
             return new Dictionary<AutoCaptureProfile, double>
             {
                 [AutoCaptureProfile.NormalMove] = 0.08d,
-                [AutoCaptureProfile.AttackHeavy] = 0.14d,
-                [AutoCaptureProfile.HitOcclusionHeavy] = 0.20d,
+                [AutoCaptureProfile.AttackHeavy] = 0.16d,
+                [AutoCaptureProfile.HitOcclusionHeavy] = 0.18d,
                 [AutoCaptureProfile.DeathHeavy] = 0.05d
             };
         }
@@ -498,6 +500,82 @@ namespace HaCreator.MapSimulator.Automation
                 Enabled = Enabled,
                 Source = source,
                 Kind = kind
+            };
+        }
+    }
+
+    internal sealed class AutoCaptureSkillCatalogControl
+    {
+        public string Path { get; set; } = "AutoCapSkillCatalog.json";
+        public string Mode { get; set; } = "curated_only";
+        public List<string> AllowedFamilies { get; set; } = new List<string>();
+        public List<string> AllowedOcclusionLevels { get; set; } = new List<string> { "low", "medium", "high" };
+
+        public static AutoCaptureSkillCatalogControl CreateDefault()
+        {
+            return new AutoCaptureSkillCatalogControl();
+        }
+
+        public AutoCaptureSkillCatalogControl Normalize()
+        {
+            string mode = string.IsNullOrWhiteSpace(Mode)
+                ? "curated_only"
+                : Mode.Trim().ToLowerInvariant();
+            if (!string.Equals(mode, "curated_only", StringComparison.Ordinal))
+            {
+                mode = "curated_only";
+            }
+
+            var allowedFamilies = new List<string>();
+            if (AllowedFamilies != null)
+            {
+                foreach (string family in AllowedFamilies)
+                {
+                    if (string.IsNullOrWhiteSpace(family))
+                    {
+                        continue;
+                    }
+
+                    string normalized = family.Trim().ToLowerInvariant();
+                    if (!allowedFamilies.Contains(normalized))
+                    {
+                        allowedFamilies.Add(normalized);
+                    }
+                }
+            }
+
+            var allowedOcclusionLevels = new List<string>();
+            if (AllowedOcclusionLevels != null)
+            {
+                foreach (string level in AllowedOcclusionLevels)
+                {
+                    if (string.IsNullOrWhiteSpace(level))
+                    {
+                        continue;
+                    }
+
+                    string normalized = level.Trim().ToLowerInvariant();
+                    if (normalized == "low" || normalized == "medium" || normalized == "high")
+                    {
+                        if (!allowedOcclusionLevels.Contains(normalized))
+                        {
+                            allowedOcclusionLevels.Add(normalized);
+                        }
+                    }
+                }
+            }
+
+            if (allowedOcclusionLevels.Count == 0)
+            {
+                allowedOcclusionLevels.AddRange(new[] { "low", "medium", "high" });
+            }
+
+            return new AutoCaptureSkillCatalogControl
+            {
+                Path = string.IsNullOrWhiteSpace(Path) ? "AutoCapSkillCatalog.json" : Path.Trim(),
+                Mode = mode,
+                AllowedFamilies = allowedFamilies,
+                AllowedOcclusionLevels = allowedOcclusionLevels
             };
         }
     }
