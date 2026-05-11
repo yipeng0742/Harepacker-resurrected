@@ -283,10 +283,6 @@ namespace HaCreator.MapSimulator
             public int SkillId { get; set; }
             public string Name { get; set; }
             public bool Enabled { get; set; }
-            public string VisualFamily { get; set; }
-            public string OcclusionLevel { get; set; }
-            public int AttackCount { get; set; }
-            public int DamagePercent { get; set; }
             public int Job { get; set; }
         }
 
@@ -630,15 +626,14 @@ namespace HaCreator.MapSimulator
                 _autoCaptureNativeDamageSkillPool.Add(entry);
             }
 
-            string catalogMode = _autoCaptureSkillCatalog?.Mode ?? "curated_only";
             string catalogPath = ResolveAutoCaptureSkillCatalogPath();
             ExportAutoCaptureSkillManifest();
             ExportOrUpdateAutoCaptureSkillCatalog(catalogPath);
-            ApplyAutoCaptureSkillCatalogFilter(catalogPath, catalogMode);
+            ApplyAutoCaptureSkillCatalogFilter(catalogPath);
 
             int builtCount = _autoCaptureNativeDamageSkillPool.Count;
             int withEffectCount = _autoCaptureNativeDamageSkillPool.Count(s => s.CachedHitEffect != null);
-            System.Console.WriteLine($"[AutoCap][native_dmg_pool] source={skillSource} scanned={scannedSkillNodes} built={builtCount} with_hit_effect={withEffectCount} total_skills={allSkills.Count} timing_source=flexible catalog_mode={catalogMode} catalog_path={catalogPath} reject_not_attack={rejectedAttack} reject_no_levels={rejectedNoLevels} reject_attack_count={rejectedAttackCount} reject_damage={rejectedDamage} reject_timings={rejectedTimings}");
+            System.Console.WriteLine($"[AutoCap][native_dmg_pool] source={skillSource} scanned={scannedSkillNodes} built={builtCount} with_hit_effect={withEffectCount} total_skills={allSkills.Count} timing_source=flexible catalog_path={catalogPath} reject_not_attack={rejectedAttack} reject_no_levels={rejectedNoLevels} reject_attack_count={rejectedAttackCount} reject_damage={rejectedDamage} reject_timings={rejectedTimings}");
 
             if (builtCount <= 0)
             {
@@ -788,10 +783,6 @@ namespace HaCreator.MapSimulator
                     {
                         existing.Name = skill.Name;
                         existing.Job = skill.Job;
-                        existing.VisualFamily = skill.VisualFamily;
-                        existing.OcclusionLevel = skill.OcclusionLevel;
-                        existing.AttackCount = skill.AttackCount;
-                        existing.DamagePercent = skill.DamagePercent;
                     }
                     else
                     {
@@ -799,11 +790,7 @@ namespace HaCreator.MapSimulator
                         {
                             SkillId = skill.SkillId,
                             Name = skill.Name,
-                            Enabled = false,
-                            VisualFamily = skill.VisualFamily,
-                            OcclusionLevel = skill.OcclusionLevel,
-                            AttackCount = skill.AttackCount,
-                            DamagePercent = skill.DamagePercent,
+                            Enabled = true,
                             Job = skill.Job
                         };
                     }
@@ -843,13 +830,8 @@ namespace HaCreator.MapSimulator
             }
         }
 
-        private void ApplyAutoCaptureSkillCatalogFilter(string catalogPath, string catalogMode)
+        private void ApplyAutoCaptureSkillCatalogFilter(string catalogPath)
         {
-            if (!string.Equals(catalogMode, "curated_only", StringComparison.Ordinal))
-            {
-                return;
-            }
-
             var catalog = LoadAutoCaptureSkillCatalog(catalogPath);
             if (catalog?.Skills == null || catalog.Skills.Count == 0)
             {
@@ -857,28 +839,15 @@ namespace HaCreator.MapSimulator
                     $"E_AUTOCAP_CAMERA_PLAN_INVALID: skill catalog is empty: {catalogPath}");
             }
 
-            var allowedFamilies = new HashSet<string>(
-                (_autoCaptureSkillCatalog?.AllowedFamilies ?? new List<string>())
-                    .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .Select(s => s.Trim().ToLowerInvariant()),
-                StringComparer.OrdinalIgnoreCase);
-            var allowedOcclusionLevels = new HashSet<string>(
-                (_autoCaptureSkillCatalog?.AllowedOcclusionLevels ?? new List<string>())
-                    .Where(s => !string.IsNullOrWhiteSpace(s))
-                    .Select(s => s.Trim().ToLowerInvariant()),
-                StringComparer.OrdinalIgnoreCase);
-
             var enabledCatalog = catalog.Skills
                 .Where(item => item != null && item.Enabled)
-                .Where(item => allowedFamilies.Count == 0 || allowedFamilies.Contains((item.VisualFamily ?? string.Empty).Trim().ToLowerInvariant()))
-                .Where(item => allowedOcclusionLevels.Count == 0 || allowedOcclusionLevels.Contains((item.OcclusionLevel ?? string.Empty).Trim().ToLowerInvariant()))
                 .ToDictionary(item => item.SkillId);
 
             _autoCaptureNativeDamageSkillPool.RemoveAll(skill => !enabledCatalog.ContainsKey(skill.SkillId));
             if (_autoCaptureNativeDamageSkillPool.Count <= 0)
             {
                 throw new InvalidOperationException(
-                    $"E_AUTOCAP_CAMERA_PLAN_INVALID: no enabled skills remain after curated filtering ({catalogPath}).");
+                    $"E_AUTOCAP_CAMERA_PLAN_INVALID: no enabled skills remain after catalog filtering ({catalogPath}).");
             }
         }
 

@@ -507,9 +507,6 @@ namespace HaCreator.MapSimulator.Automation
     internal sealed class AutoCaptureSkillCatalogControl
     {
         public string Path { get; set; } = "AutoCapSkillCatalog.json";
-        public string Mode { get; set; } = "curated_only";
-        public List<string> AllowedFamilies { get; set; } = new List<string>();
-        public List<string> AllowedOcclusionLevels { get; set; } = new List<string> { "low", "medium", "high" };
 
         public static AutoCaptureSkillCatalogControl CreateDefault()
         {
@@ -518,64 +515,9 @@ namespace HaCreator.MapSimulator.Automation
 
         public AutoCaptureSkillCatalogControl Normalize()
         {
-            string mode = string.IsNullOrWhiteSpace(Mode)
-                ? "curated_only"
-                : Mode.Trim().ToLowerInvariant();
-            if (!string.Equals(mode, "curated_only", StringComparison.Ordinal))
-            {
-                mode = "curated_only";
-            }
-
-            var allowedFamilies = new List<string>();
-            if (AllowedFamilies != null)
-            {
-                foreach (string family in AllowedFamilies)
-                {
-                    if (string.IsNullOrWhiteSpace(family))
-                    {
-                        continue;
-                    }
-
-                    string normalized = family.Trim().ToLowerInvariant();
-                    if (!allowedFamilies.Contains(normalized))
-                    {
-                        allowedFamilies.Add(normalized);
-                    }
-                }
-            }
-
-            var allowedOcclusionLevels = new List<string>();
-            if (AllowedOcclusionLevels != null)
-            {
-                foreach (string level in AllowedOcclusionLevels)
-                {
-                    if (string.IsNullOrWhiteSpace(level))
-                    {
-                        continue;
-                    }
-
-                    string normalized = level.Trim().ToLowerInvariant();
-                    if (normalized == "low" || normalized == "medium" || normalized == "high")
-                    {
-                        if (!allowedOcclusionLevels.Contains(normalized))
-                        {
-                            allowedOcclusionLevels.Add(normalized);
-                        }
-                    }
-                }
-            }
-
-            if (allowedOcclusionLevels.Count == 0)
-            {
-                allowedOcclusionLevels.AddRange(new[] { "low", "medium", "high" });
-            }
-
             return new AutoCaptureSkillCatalogControl
             {
-                Path = string.IsNullOrWhiteSpace(Path) ? "AutoCapSkillCatalog.json" : Path.Trim(),
-                Mode = mode,
-                AllowedFamilies = allowedFamilies,
-                AllowedOcclusionLevels = allowedOcclusionLevels
+                Path = string.IsNullOrWhiteSpace(Path) ? "AutoCapSkillCatalog.json" : Path.Trim()
             };
         }
     }

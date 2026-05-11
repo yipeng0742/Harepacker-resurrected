@@ -129,9 +129,6 @@ namespace HaCreator.MapSimulator.Automation
         private sealed class SkillCatalogControl
         {
             public string path { get; set; } = "AutoCapSkillCatalog.json";
-            public string mode { get; set; } = "curated_only";
-            public string[] allowed_families { get; set; } = Array.Empty<string>();
-            public string[] allowed_occlusion_levels { get; set; } = new[] { "low", "medium", "high" };
         }
 
         private sealed class WriterControl
@@ -237,7 +234,7 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"                 template_style={damageControl.TemplateStyle}, template_weights=single:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Single, 0)},double_tap:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.DoubleTap, 0)},rapid_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.RapidCombo, 0)},stagger_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.StaggerCombo, 0)},finisher:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Finisher, 0)}");
                 Console.WriteLine($"  hit_effect_ctrl: enabled={hitEffectControl.Enabled}, palette={hitEffectControl.PaletteMode}, alpha={hitEffectControl.AlphaMin:0.##}-{hitEffectControl.AlphaMax:0.##}, scale={hitEffectControl.ScaleMin:0.##}-{hitEffectControl.ScaleMax:0.##}, lifetime={hitEffectControl.LifetimeMsMin}-{hitEffectControl.LifetimeMsMax}ms, layers={hitEffectControl.ExtraLayersMin}-{hitEffectControl.ExtraLayersMax}, jitter={hitEffectControl.JitterPxX}x{hitEffectControl.JitterPxY}, variations=[{string.Join(",", hitEffectControl.VariationPool)}]");
                 Console.WriteLine($"  real_skill_fx : enabled={realSkillEffectControl.Enabled}, source={realSkillEffectControl.Source}, kind={realSkillEffectControl.Kind}");
-                Console.WriteLine($"  skill_catalog : mode={skillCatalog.Mode}, path={skillCatalog.Path}, allowed_families=[{string.Join(",", skillCatalog.AllowedFamilies)}], allowed_occlusion_levels=[{string.Join(",", skillCatalog.AllowedOcclusionLevels)}]");
+                Console.WriteLine($"  skill_catalog : path={skillCatalog.Path}");
                 var writer = job.writer ?? new WriterControl();
                 int writerThreads = Math.Max(1, writer.threads);
                 int writerQueueCapacity = Math.Max(16, writer.queue_capacity);
@@ -752,10 +749,7 @@ namespace HaCreator.MapSimulator.Automation
             control ??= new SkillCatalogControl();
             return new AutoCaptureSkillCatalogControl
             {
-                Path = control.path,
-                Mode = control.mode,
-                AllowedFamilies = (control.allowed_families ?? Array.Empty<string>()).ToList(),
-                AllowedOcclusionLevels = (control.allowed_occlusion_levels ?? new[] { "low", "medium", "high" }).ToList()
+                Path = control.path
             }.Normalize();
         }
     }
