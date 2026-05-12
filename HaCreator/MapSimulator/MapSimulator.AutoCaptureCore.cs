@@ -1,6 +1,8 @@
 using HaCreator.MapSimulator.Automation;
 using HaCreator.MapSimulator.Character.Skills;
 using HaSharedLibrary;
+using HaSharedLibrary.Render.DX;
+using HaSharedLibrary.Util;
 using MapleLib.WzLib;
 using MapleLib.WzLib.WzProperties;
 using Microsoft.Xna.Framework;

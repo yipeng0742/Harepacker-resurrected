@@ -4,6 +4,7 @@ using HaCreator.MapSimulator.Effects;
 using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 
@@ -11,6 +12,11 @@ namespace HaCreator.MapSimulator
 {
     public partial class MapSimulator
     {
+        private static bool IsDeathLikeAction(string action)
+        {
+            return action == "die1" || action == "die2" || action == "die";
+        }
+
         private bool IsDeadMutualExclusionEnabled()
         {
             return _autoCaptureBucketPolicy?.EnforceDeadMutualExclusion ?? true;
@@ -270,7 +276,7 @@ namespace HaCreator.MapSimulator
                         break;
                     }
 
-                    if (_autoCaptureHitEffectControl?.Enabled == true && !_autoCaptureBucketPolicy?.SuppressMobLabels == true)
+                    if (_autoCaptureHitEffectControl?.Enabled == true)
                     {
                         int extraEffects = PickAutoCaptureExtraLayers();
                         if (tuning?.DisableHitEffects == true)

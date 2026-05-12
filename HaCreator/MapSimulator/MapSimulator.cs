@@ -1,5 +1,4 @@
-﻿using HaCreator.MapSimulator.Character.Skills;
-using HaCreator.MapEditor;
+﻿using HaCreator.MapEditor;
 using HaCreator.MapEditor.Info;
 using HaCreator.MapEditor.Instance;
 using HaCreator.MapEditor.Instance.Misc;
@@ -34,7 +33,6 @@ using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using HaCreator.MapSimulator.Pools;
@@ -42,7 +40,6 @@ using HaCreator.MapSimulator.Effects;
 using HaCreator.MapSimulator.Fields;
 using HaCreator.MapSimulator.Managers;
 using HaCreator.MapSimulator.Core;
-using HaCreator.MapSimulator.Automation;
 
 namespace HaCreator.MapSimulator
 {
@@ -220,14 +217,14 @@ namespace HaCreator.MapSimulator
         private List<IDXObject> _tombFallFrames; // fall/0..19 animation
         private IDXObject _tombLandFrame; // land/0 (final resting frame)
         private int _tombAnimationStartTime; // When the death occurred
-
+        private bool _tombAnimationComplete; // Whether fall animation has finished
 
         // Tombstone falling physics
         private float _tombCurrentY; // Current Y position during fall
         private float _tombVelocityY; // Current fall velocity
         private float _tombTargetY; // Ground Y position (death position)
         private bool _tombHasLanded; // Whether tombstone has hit ground
-        private const float TOMB_GRAVITY = 1200f; // Gravity acceleration (px/s闁?
+        private const float TOMB_GRAVITY = 1200f; // Gravity acceleration (px/s²)
         private const float TOMB_START_HEIGHT = 300f; // Height above death position to start falling
 
         // Debug
@@ -276,1297 +273,6 @@ namespace HaCreator.MapSimulator
             _loadMapCallback = callback;
         }
 
-        #if false
-        private void TickAutoCaptureCamera()
-        {
-            if (!IsAutoCaptureEnabled || !_autoCaptureStarted || _autoCaptureScanPath == null || _autoCaptureScanPath.Count == 0)
-                return;
-
-            switch (_autoCaptureCameraPhase)
-            {
-                case AutoCaptureCameraPhase.Init:
-                    if (_autoCaptureWarmupFramesRemaining > 0)
-                    {
-                        _autoCaptureWarmupFramesRemaining--;
-                        return;
-                    }
-                    _autoCaptureCameraPhase = AutoCaptureCameraPhase.MoveToPoint;
-                    return;
-                case AutoCaptureCameraPhase.MoveToPoint:
-                    AdvanceAutoCaptureCameraOnce();
-                    return;
-                case AutoCaptureCameraPhase.Settling:
-                    if (_autoCaptureSettleFramesRemaining > 0)
-                    {
-                        _autoCaptureSettleFramesRemaining--;
-                        return;
-                    }
-                    PrepareAutoCaptureBucketForSampling();
-                    _autoCaptureSampledFramesAtPoint = 0;
-                    _autoCaptureCameraPhase = AutoCaptureCameraPhase.Sampling;
-                    return;
-                case AutoCaptureCameraPhase.Sampling:
-                case AutoCaptureCameraPhase.Complete:
-                default:
-                    return;
-            }
-        }
-
-        private void AdvanceAutoCaptureCameraOnce()
-        {
-            if (_autoCaptureScanPath == null || _autoCaptureScanPath.Count == 0)
-            {
-                return;
-            }
-
-            int nextPointIndex = _autoCaptureCurrentPointIndex + 1;
-            if (nextPointIndex >= _autoCaptureScanPath.Count)
-            {
-                _autoCaptureCameraPhase = AutoCaptureCameraPhase.Complete;
-                return;
-            }
-
-            Point p = _autoCaptureScanPath[nextPointIndex];
-            mapShiftX = p.X;
-            mapShiftY = p.Y;
-            ClampCameraToBoundaries();
-            if (mapShiftX != p.X || mapShiftY != p.Y)
-            {
-                throw new InvalidOperationException("E_AUTOCAP_CAMERA_PATH_INVALID: camera point clamped out of range.");
-            }
-
-            _autoCaptureCurrentPointIndex = nextPointIndex;
-            _autoCaptureSettleFramesRemaining = Math.Max(0, _autoCaptureCameraPlan?.SettleFrames ?? 0);
-            _autoCaptureSampledFramesAtPoint = 0;
-            _autoCaptureCameraPhase = _autoCaptureSettleFramesRemaining > 0
-                ? AutoCaptureCameraPhase.Settling
-                : AutoCaptureCameraPhase.Sampling;
-        }
-
-        private void MarkAutoCaptureSamplingDecision()
-        {
-            if (_autoCaptureCameraPhase == AutoCaptureCameraPhase.Sampling)
-            {
-                _autoCaptureSampledFramesAtPoint++;
-                if (_autoCaptureSampledFramesAtPoint >= Math.Max(1, _autoCaptureSampleFramesPerPoint))
-                {
-                    _autoCaptureCameraPhase = (_autoCaptureCurrentPointIndex + 1) >= _autoCaptureTotalPointCount
-                        ? AutoCaptureCameraPhase.Complete
-                        : AutoCaptureCameraPhase.MoveToPoint;
-                }
-            }
-        }
-
-        private static AutoCaptureProfile SelectProfileByWeight(Random random, Dictionary<AutoCaptureProfile, int> mix)
-        {
-            if (random == null || mix == null || mix.Count == 0)
-            {
-                return AutoCaptureProfile.NormalMove;
-            }
-
-            int total = mix.Values.Where(v => v > 0).Sum();
-            if (total <= 0)
-            {
-                return AutoCaptureProfile.NormalMove;
-            }
-
-            int roll = random.Next(total);
-            int acc = 0;
-            foreach (var kv in mix)
-            {
-                if (kv.Value <= 0)
-                    continue;
-
-                acc += kv.Value;
-                if (roll < acc)
-                {
-                    return kv.Key;
-                }
-            }
-
-            return AutoCaptureProfile.NormalMove;
-        }
-
-        private static IEnumerable<AutoCaptureDataBucket> EnumerateAllBuckets()
-        {
-            return (AutoCaptureDataBucket[])Enum.GetValues(typeof(AutoCaptureDataBucket));
-        }
-
-        private static string GetBucketCode(AutoCaptureDataBucket bucket)
-        {
-            return bucket switch
-            {
-                AutoCaptureDataBucket.CleanBaseline => "A",
-                AutoCaptureDataBucket.AnchorDecoupling => "B",
-                AutoCaptureDataBucket.ChaosOcclusion => "C",
-                _ => "A"
-            };
-        }
-
-        private static bool IsHitLikeAction(string action)
-        {
-            if (string.IsNullOrEmpty(action))
-            {
-                return false;
-            }
-
-            string s = action.ToLowerInvariant();
-            return s.StartsWith("hit", StringComparison.Ordinal) ||
-                   s.StartsWith("damage", StringComparison.Ordinal) ||
-                   s.StartsWith("dam", StringComparison.Ordinal);
-        }
-
-        private static bool IsStandMoveLikeAction(string action)
-        {
-            if (string.IsNullOrEmpty(action))
-            {
-                return false;
-            }
-
-            string s = action.ToLowerInvariant();
-            return s.StartsWith("stand", StringComparison.Ordinal) ||
-                   s.StartsWith("move", StringComparison.Ordinal) ||
-                   s.StartsWith("walk", StringComparison.Ordinal) ||
-                   s.StartsWith("fly", StringComparison.Ordinal) ||
-                   s.StartsWith("jump", StringComparison.Ordinal);
-        }
-
-        private AutoCaptureDataBucket SelectBucketByGlobalDeficit()
-        {
-            var mix = _autoCaptureBucketMix ?? AutoCaptureBucketMix.CreateDefault();
-            int totalSaved = 0;
-            foreach (var bucket in EnumerateAllBuckets())
-            {
-                totalSaved += _autoCaptureBucketSaved.TryGetValue(bucket, out int v) ? Math.Max(0, v) : 0;
-            }
-
-            if (totalSaved <= 0)
-            {
-                AutoCaptureDataBucket fallback = AutoCaptureDataBucket.ChaosOcclusion;
-                int bestWeight = -1;
-                foreach (var bucket in EnumerateAllBuckets())
-                {
-                    int w = mix.GetWeight(bucket);
-                    if (w > bestWeight)
-                    {
-                        bestWeight = w;
-                        fallback = bucket;
-                    }
-                }
-                return fallback;
-            }
-
-            AutoCaptureDataBucket selected = AutoCaptureDataBucket.ChaosOcclusion;
-            double bestGap = double.MinValue;
-            int bestWeightTie = -1;
-            foreach (var bucket in EnumerateAllBuckets())
-            {
-                int targetWeight = mix.GetWeight(bucket);
-                if (targetWeight <= 0)
-                {
-                    continue;
-                }
-
-                int saved = _autoCaptureBucketSaved.TryGetValue(bucket, out int cnt) ? Math.Max(0, cnt) : 0;
-                double expected = totalSaved * (targetWeight / 100.0d);
-                double gap = expected - saved;
-                if (gap > bestGap + 1e-6 ||
-                    (Math.Abs(gap - bestGap) <= 1e-6 && targetWeight > bestWeightTie))
-                {
-                    bestGap = gap;
-                    bestWeightTie = targetWeight;
-                    selected = bucket;
-                }
-            }
-
-            return selected;
-        }
-
-        private AutoCaptureProfile SelectProfileForBucket(AutoCaptureDataBucket bucket)
-        {
-            switch (bucket)
-            {
-                case AutoCaptureDataBucket.CleanBaseline:
-                    return AutoCaptureProfile.NormalMove;
-                case AutoCaptureDataBucket.AnchorDecoupling:
-                {
-                    int normal = _autoCaptureProfileMix != null && _autoCaptureProfileMix.TryGetValue(AutoCaptureProfile.NormalMove, out int wNormal)
-                        ? Math.Max(0, wNormal)
-                        : 1;
-                    int attack = _autoCaptureProfileMix != null && _autoCaptureProfileMix.TryGetValue(AutoCaptureProfile.AttackHeavy, out int wAttack)
-                        ? Math.Max(0, wAttack)
-                        : 1;
-                    int total = normal + attack;
-                    if (total <= 0 || _autoCaptureRandom == null)
-                    {
-                        return AutoCaptureProfile.NormalMove;
-                    }
-                    int roll = _autoCaptureRandom.Next(total);
-                    return roll < normal ? AutoCaptureProfile.NormalMove : AutoCaptureProfile.AttackHeavy;
-                }
-                case AutoCaptureDataBucket.ChaosOcclusion:
-                {
-                    int hit = _autoCaptureProfileMix != null && _autoCaptureProfileMix.TryGetValue(AutoCaptureProfile.HitOcclusionHeavy, out int wHit)
-                        ? Math.Max(0, wHit)
-                        : 4;
-                    int attack = _autoCaptureProfileMix != null && _autoCaptureProfileMix.TryGetValue(AutoCaptureProfile.AttackHeavy, out int wAttack)
-                        ? Math.Max(0, wAttack)
-                        : 2;
-                    int death = _autoCaptureProfileMix != null && _autoCaptureProfileMix.TryGetValue(AutoCaptureProfile.DeathHeavy, out int wDeath)
-                        ? Math.Max(0, wDeath)
-                        : 1;
-                    int total = hit + attack + death;
-                    if (total <= 0 || _autoCaptureRandom == null)
-                    {
-                        return AutoCaptureProfile.HitOcclusionHeavy;
-                    }
-                    int roll = _autoCaptureRandom.Next(total);
-                    if (roll < hit)
-                    {
-                        return AutoCaptureProfile.HitOcclusionHeavy;
-                    }
-                    roll -= hit;
-                    if (roll < attack)
-                    {
-                        return AutoCaptureProfile.AttackHeavy;
-                    }
-                    return AutoCaptureProfile.DeathHeavy;
-                }
-                default:
-                    return AutoCaptureProfile.HitOcclusionHeavy;
-            }
-        }
-
-        private AutoCaptureBucketRuntimeTuning BuildBucketTuning()
-        {
-            var tuning = new AutoCaptureBucketRuntimeTuning
-            {
-                Profile = _autoCaptureCurrentProfile
-            };
-            switch (_autoCaptureCurrentBucket)
-            {
-                case AutoCaptureDataBucket.CleanBaseline:
-                    tuning.DisableDamageNumbers = true;
-                    tuning.DisableHitEffects = true;
-                    tuning.DamageLagProbOverride = 0d;
-                    break;
-                case AutoCaptureDataBucket.AnchorDecoupling:
-                    tuning.HitExtraLayerMaxClamp = 0;
-                    tuning.DamageLagProbOverride = Math.Min(0.08d, _autoCaptureBucketPolicy?.StandMoveDamageLagProb ?? 0.03d);
-                    break;
-                case AutoCaptureDataBucket.ChaosOcclusion:
-                    tuning.HitDamageMinProbOverride = Math.Max(
-                        0.90d,
-                        _autoCaptureBucketPolicy?.HitDamageMinProb ?? 0.90d);
-                    break;
-            }
-            return tuning;
-        }
-
-        private void PrepareAutoCaptureBucketForSampling()
-        {
-            if (!IsAutoCaptureEnabled || _autoCaptureRandom == null)
-            {
-                return;
-            }
-
-            _autoCaptureCurrentBucket = SelectBucketByGlobalDeficit();
-            _autoCaptureCurrentProfile = SelectProfileForBucket(_autoCaptureCurrentBucket);
-            _autoCaptureProfileSwitchTick = Environment.TickCount;
-            _autoCapturePointRecipeSeed = _autoCaptureRandom.Next();
-            _autoCapturePointDamageTemplate = PickAutoCapDamageTemplate(_autoCaptureCurrentProfile);
-            RebuildAutoCapturePointSkillPool();
-        }
-
-        private void RebuildAutoCapturePointSkillPool()
-        {
-            _autoCapturePointSkillPool.Clear();
-            if (_autoCaptureNativeDamageSkillPool.Count <= 0)
-            {
-                return;
-            }
-
-            string targetOcclusion = ResolvePointOcclusionLevel(_autoCaptureCurrentProfile, _autoCaptureCurrentBucket);
-            IEnumerable<AutoCapNativeDamageSkillEntry> filtered = _autoCaptureNativeDamageSkillPool
-                .Where(skill => string.Equals(skill.OcclusionLevel, targetOcclusion, StringComparison.OrdinalIgnoreCase));
-
-            if (!filtered.Any())
-            {
-                filtered = _autoCaptureNativeDamageSkillPool;
-            }
-
-            int takeCount = _autoCaptureCurrentProfile switch
-            {
-                AutoCaptureProfile.NormalMove => 2,
-                AutoCaptureProfile.AttackHeavy => 3,
-                AutoCaptureProfile.HitOcclusionHeavy => 4,
-                AutoCaptureProfile.DeathHeavy => 2,
-                _ => 2
-            };
-
-            foreach (var skill in filtered.OrderBy(_ => _autoCaptureRandom.Next()).Take(takeCount))
-            {
-                _autoCapturePointSkillPool.Add(skill);
-            }
-
-            if (_autoCapturePointSkillPool.Count == 0)
-            {
-                _autoCapturePointSkillPool.Add(_autoCaptureNativeDamageSkillPool[_autoCaptureRandom.Next(_autoCaptureNativeDamageSkillPool.Count)]);
-            }
-        }
-
-        private static string ResolvePointOcclusionLevel(AutoCaptureProfile profile, AutoCaptureDataBucket bucket)
-        {
-            if (profile == AutoCaptureProfile.NormalMove)
-            {
-                return "low";
-            }
-            if (profile == AutoCaptureProfile.AttackHeavy)
-            {
-                return "medium";
-            }
-            if (profile == AutoCaptureProfile.HitOcclusionHeavy || bucket == AutoCaptureDataBucket.ChaosOcclusion)
-            {
-                return "high";
-            }
-            return "medium";
-        }
-
-        private bool IsDeadMutualExclusionEnabled()
-        {
-            return _autoCaptureBucketPolicy?.EnforceDeadMutualExclusion ?? true;
-        }
-
-        private bool IsDeadLikeMob(MobItem mob)
-        {
-            if (mob == null)
-            {
-                return true;
-            }
-            if (IsDeadMutualExclusionEnabled())
-            {
-                if ((mob.AI?.IsDead ?? false) || mob.IsDeathAnimationComplete || IsDeathLikeAction(mob.CurrentAction))
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private void IncrementBucketCount(Dictionary<AutoCaptureDataBucket, int> target, AutoCaptureDataBucket bucket)
-        {
-            if (target == null)
-            {
-                return;
-            }
-            if (target.TryGetValue(bucket, out int value))
-            {
-                target[bucket] = value + 1;
-            }
-            else
-            {
-                target[bucket] = 1;
-            }
-        }
-
-        private int GetBucketCount(Dictionary<AutoCaptureDataBucket, int> source, AutoCaptureDataBucket bucket)
-        {
-            if (source == null)
-            {
-                return 0;
-            }
-            return source.TryGetValue(bucket, out int value) ? Math.Max(0, value) : 0;
-        }
-
-        private void AppendBucketManifest(
-            int frameNo,
-            AutoCaptureDataBucket bucket,
-            AutoCaptureProfile profile,
-            bool saved,
-            int rawBoxes,
-            int usableBoxes,
-            bool forcedHitState,
-            bool damageEventTriggered)
-        {
-            if (string.IsNullOrWhiteSpace(_autoCaptureBucketManifestPath))
-            {
-                return;
-            }
-
-            try
-            {
-                string line =
-                    $"{frameNo},bucket={GetBucketCode(bucket)},profile={profile},saved={(saved ? 1 : 0)},raw={rawBoxes},usable={usableBoxes},forced_hit={(forcedHitState ? 1 : 0)},damage_event={(damageEventTriggered ? 1 : 0)}";
-                File.AppendAllText(_autoCaptureBucketManifestPath, line + Environment.NewLine, Encoding.UTF8);
-            }
-            catch
-            {
-                // best effort diagnostics only
-            }
-        }
-
-        private void ApplyAutoCaptureAugmentation(int tick)
-        {
-            if (!_datasetGenerator.IsGenerating || _mobPool?.ActiveMobs == null)
-                return;
-
-            var bucketTuning = BuildBucketTuning();
-            int capturedFrames = _datasetGenerator.CapturedFrameCount;
-            if (capturedFrames > 0 && capturedFrames % 30 == 0 && capturedFrames != _autoCaptureLastProfileLogFrame)
-            {
-                _autoCaptureLastProfileLogFrame = capturedFrames;
-                int dmgAttemptedDelta = _autoCaptureDmgAttempted - _autoCaptureDmgAttemptedSnapshot;
-                int dmgFiredDelta = _autoCaptureDmgFired - _autoCaptureDmgFiredSnapshot;
-                int dmgSkippedDelta = _autoCaptureDmgSkippedCooldown - _autoCaptureDmgSkippedCooldownSnapshot;
-                int dmgSegmentsDelta = _autoCaptureDmgSegmentsEmitted - _autoCaptureDmgSegmentsEmittedSnapshot;
-                int dmgMobsHitPeak = _autoCaptureDmgMobsHitPeakSinceLastLog;
-                int capAttemptedDelta = _autoCaptureCaptureAttempted - _autoCaptureCaptureAttemptedSnapshot;
-                int capSavedDelta = _autoCaptureCaptureSaved - _autoCaptureCaptureSavedSnapshot;
-                int capSkippedEmptyDelta = _autoCaptureCaptureSkippedEmpty - _autoCaptureCaptureSkippedEmptySnapshot;
-                int boundsRawDelta = _autoCaptureBoundsRawCount - _autoCaptureBoundsRawSnapshot;
-                int boundsUsableDelta = _autoCaptureBoundsUsableCount - _autoCaptureBoundsUsableSnapshot;
-                int saveFailDelta = _autoCaptureSaveFailCount - _autoCaptureSaveFailCountSnapshot;
-                int bucketAttemptA = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.CleanBaseline) - GetBucketCount(_autoCaptureBucketAttemptedSnapshot, AutoCaptureDataBucket.CleanBaseline);
-                int bucketAttemptB = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.AnchorDecoupling) - GetBucketCount(_autoCaptureBucketAttemptedSnapshot, AutoCaptureDataBucket.AnchorDecoupling);
-                int bucketAttemptC = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.ChaosOcclusion) - GetBucketCount(_autoCaptureBucketAttemptedSnapshot, AutoCaptureDataBucket.ChaosOcclusion);
-                int bucketSavedA = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.CleanBaseline) - GetBucketCount(_autoCaptureBucketSavedSnapshot, AutoCaptureDataBucket.CleanBaseline);
-                int bucketSavedB = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.AnchorDecoupling) - GetBucketCount(_autoCaptureBucketSavedSnapshot, AutoCaptureDataBucket.AnchorDecoupling);
-                int bucketSavedC = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.ChaosOcclusion) - GetBucketCount(_autoCaptureBucketSavedSnapshot, AutoCaptureDataBucket.ChaosOcclusion);
-                string saveFailReason = _datasetGenerator?.LastSaveFailureReason ?? "none";
-                string saveFailByReason = FormatSaveFailReasonStats();
-                _autoCaptureDmgAttemptedSnapshot = _autoCaptureDmgAttempted;
-                _autoCaptureDmgFiredSnapshot = _autoCaptureDmgFired;
-                _autoCaptureDmgSkippedCooldownSnapshot = _autoCaptureDmgSkippedCooldown;
-                _autoCaptureDmgSegmentsEmittedSnapshot = _autoCaptureDmgSegmentsEmitted;
-                _autoCaptureCaptureAttemptedSnapshot = _autoCaptureCaptureAttempted;
-                _autoCaptureCaptureSavedSnapshot = _autoCaptureCaptureSaved;
-                _autoCaptureCaptureSkippedEmptySnapshot = _autoCaptureCaptureSkippedEmpty;
-                _autoCaptureBoundsRawSnapshot = _autoCaptureBoundsRawCount;
-                _autoCaptureBoundsUsableSnapshot = _autoCaptureBoundsUsableCount;
-                _autoCaptureSaveFailCountSnapshot = _autoCaptureSaveFailCount;
-                foreach (var bucket in EnumerateAllBuckets())
-                {
-                    _autoCaptureBucketAttemptedSnapshot[bucket] = GetBucketCount(_autoCaptureBucketAttempted, bucket);
-                    _autoCaptureBucketSavedSnapshot[bucket] = GetBucketCount(_autoCaptureBucketSaved, bucket);
-                }
-                _autoCaptureDmgMobsHitPeakSinceLastLog = 0;
-                double saveRate = capAttemptedDelta > 0 ? ((double)capSavedDelta / capAttemptedDelta) : 0d;
-                int scanIdx = _autoCaptureCurrentPointIndex + 1;
-                int scanTotal = _autoCaptureScanPath?.Count ?? 0;
-                System.Console.WriteLine(
-                    $"[AutoCap][采集摘要] frame={capturedFrames} point_idx={scanIdx} point_total={scanTotal} sampled_frames_at_point={_autoCaptureSampledFramesAtPoint} phase={_autoCaptureCameraPhase} bucket={GetBucketCode(_autoCaptureCurrentBucket)} profile={_autoCaptureCurrentProfile} capture_attempted={capAttemptedDelta} saved={capSavedDelta} skipped_empty={capSkippedEmptyDelta} bucket_attempted=A:{bucketAttemptA},B:{bucketAttemptB},C:{bucketAttemptC} bucket_saved=A:{bucketSavedA},B:{bucketSavedB},C:{bucketSavedC} bounds_raw={boundsRawDelta} bounds_usable={boundsUsableDelta} save_fail={saveFailDelta} save_fail_reason={saveFailReason} save_fail_by_reason={saveFailByReason} save_rate={saveRate:0.000} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
-            }
-            var combat = _effectManager?.Combat;
-            var forceStateMobs = new List<MobItem>();
-            var fallbackMobs = new List<MobItem>();
-            _autoCaptureLastFrameHasForcedHitState = false;
-            _autoCaptureLastFrameDamageEventTriggered = false;
-
-            foreach (var mob in _mobPool.ActiveMobs)
-            {
-                mob.ForceStateForDataset(null);
-            }
-
-            foreach (var mob in _mobPool.ActiveMobs)
-            {
-                bool hasForcedState = false;
-                Random pointRandom = new Random(_autoCapturePointRecipeSeed ^ mob.PoolId ^ (_autoCaptureCurrentPointIndex + 1));
-                switch (_autoCaptureCurrentProfile)
-                {
-                    case AutoCaptureProfile.NormalMove:
-                    {
-                        if (pointRandom.NextDouble() < 0.35)
-                        {
-                            string moveAction = mob.PickRandomActionByPrefixes(pointRandom, "move", "walk", "fly", "jump", "stand");
-                            if (!string.IsNullOrEmpty(moveAction))
-                            {
-                                mob.ForceStateForDataset(moveAction);
-                                hasForcedState = true;
-                                if (IsHitLikeAction(moveAction))
-                                {
-                                    _autoCaptureLastFrameHasForcedHitState = true;
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case AutoCaptureProfile.AttackHeavy:
-                    {
-                        if (pointRandom.NextDouble() < 0.90)
-                        {
-                            string attackAction = mob.PickRandomActionByPrefixes(pointRandom, "attack", "skill", "magic", "cast");
-                            if (!string.IsNullOrEmpty(attackAction))
-                            {
-                                mob.ForceStateForDataset(attackAction);
-                                hasForcedState = true;
-                                if (IsHitLikeAction(attackAction))
-                                {
-                                    _autoCaptureLastFrameHasForcedHitState = true;
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    case AutoCaptureProfile.HitOcclusionHeavy:
-                    {
-                        if (pointRandom.NextDouble() < 0.45)
-                        {
-                            string hitAction = mob.PickRandomActionByPrefixes(pointRandom, "hit", "damage", "dam");
-                            if (!string.IsNullOrEmpty(hitAction))
-                            {
-                                mob.ForceStateForDataset(hitAction);
-                                hasForcedState = true;
-                                if (IsHitLikeAction(hitAction))
-                                {
-                                    _autoCaptureLastFrameHasForcedHitState = true;
-                                }
-                            }
-                        }
-                        if (combat != null)
-                        {
-                        }
-                        break;
-                    }
-                    case AutoCaptureProfile.DeathHeavy:
-                    {
-                        bool forcedDead = false;
-                        if (pointRandom.NextDouble() < 0.80)
-                        {
-                            string dieAction = mob.PickRandomActionByPrefixes(pointRandom, "die", "dead", "death");
-                            if (!string.IsNullOrEmpty(dieAction))
-                            {
-                                mob.ForceStateForDataset(dieAction);
-                                forcedDead = true;
-                                hasForcedState = true;
-                            }
-                        }
-
-                        if (!forcedDead && pointRandom.NextDouble() < 0.20)
-                        {
-                            string hitAction = mob.PickRandomActionByPrefixes(pointRandom, "hit", "damage", "dam");
-                            if (!string.IsNullOrEmpty(hitAction))
-                            {
-                                mob.ForceStateForDataset(hitAction);
-                                hasForcedState = true;
-                                if (IsHitLikeAction(hitAction))
-                                {
-                                    _autoCaptureLastFrameHasForcedHitState = true;
-                                }
-                            }
-                        }
-
-                        if (combat != null && forcedDead && pointRandom.NextDouble() < 0.25)
-                        {
-                            combat.AddDeathEffectForMob(mob, tick);
-                        }
-                        break;
-                    }
-                }
-
-                if (hasForcedState)
-                {
-                    forceStateMobs.Add(mob);
-                }
-                else
-                {
-                    fallbackMobs.Add(mob);
-                }
-            }
-
-            if (combat == null)
-            {
-                return;
-            }
-
-            TryTriggerAutoCaptureDamageNumbers(combat, tick, forceStateMobs, fallbackMobs, bucketTuning);
-        }
-
-        private void TryTriggerAutoCaptureDamageNumbers(CombatEffects combat, int tick, List<MobItem> forceStateMobs, List<MobItem> fallbackMobs, AutoCaptureBucketRuntimeTuning tuning)
-        {
-            if (combat == null || _autoCaptureRandom == null || _autoCaptureDamageNumberControl == null)
-                return;
-
-            if (tuning?.DisableDamageNumbers == true)
-            {
-                return;
-            }
-
-            // Event generation is camera-phase synchronized:
-            // only trigger during sampling, then lock camera for event visibility.
-            if (_autoCaptureCameraPhase != AutoCaptureCameraPhase.Sampling)
-            {
-                return;
-            }
-
-            if (tick != _autoCaptureDmgFrameMarker)
-            {
-                _autoCaptureDmgFrameMarker = tick;
-                _autoCaptureDmgEventsUsedOnCaptureFrame = 0;
-                _autoCaptureDmgMobsHitCurrentFrame = 0;
-            }
-
-            var candidates = BuildDamageEventCandidates(forceStateMobs, fallbackMobs);
-            if (candidates.Count == 0)
-            {
-                // Fallback: when strict in-view filter empties out, keep a weak fallback
-                // to avoid fully silent bound events.
-                if (forceStateMobs != null && forceStateMobs.Count > 0)
-                {
-                    candidates.AddRange(forceStateMobs.OrderBy(m => DistanceToCameraCenterSq(m)));
-                }
-                if (fallbackMobs != null && fallbackMobs.Count > 0)
-                {
-                    candidates.AddRange(fallbackMobs.OrderBy(m => DistanceToCameraCenterSq(m)));
-                }
-            }
-
-            if (candidates.Count == 0)
-            {
-                return;
-            }
-
-            int targetMobCount = ResolveDynamicBoundEventFrameLimit(candidates.Count);
-            int availableByFrame = Math.Max(0, targetMobCount - _autoCaptureDmgEventsUsedOnCaptureFrame);
-            int availableByDmgHard = Math.Max(0, _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame - _autoCaptureDmgEventsUsedOnCaptureFrame);
-            int maxTargetMobs = Math.Min(availableByFrame, availableByDmgHard);
-            if (maxTargetMobs <= 0)
-            {
-                return;
-            }
-            int selectedMobCount = Math.Min(Math.Min(targetMobCount, maxTargetMobs), Math.Min(6, candidates.Count));
-
-            double damageProb = _autoCaptureDamageNumberControl.GetProbability(_autoCaptureCurrentProfile);
-            bool hasHitState = _autoCaptureLastFrameHasForcedHitState;
-            bool standMoveOnly = !hasHitState && forceStateMobs != null && forceStateMobs.All(m => m == null || IsStandMoveLikeAction(m.CurrentAction));
-            if (hasHitState)
-            {
-                double hitMinProb = Math.Max(0.90d, tuning?.HitDamageMinProbOverride ?? (_autoCaptureBucketPolicy?.HitDamageMinProb ?? 0.90d));
-                damageProb = Math.Max(damageProb, hitMinProb);
-            }
-            else if (standMoveOnly || _autoCaptureCurrentProfile == AutoCaptureProfile.NormalMove)
-            {
-                double lagProb = tuning?.DamageLagProbOverride ?? (_autoCaptureBucketPolicy?.StandMoveDamageLagProb ?? 0.03d);
-                damageProb = Math.Min(damageProb, Math.Clamp(lagProb, 0d, 1d));
-            }
-            bool forceByTimeout = unchecked(tick - _autoCaptureDmgLastGlobalTick) > 1200;
-            if (!forceByTimeout && _autoCaptureRandom.NextDouble() >= damageProb)
-            {
-                return;
-            }
-
-            var selectedMobs = new List<MobItem>();
-            for (int i = 0; i < candidates.Count && selectedMobs.Count < selectedMobCount; i++)
-            {
-                if (candidates[i] != null)
-                {
-                    selectedMobs.Add(candidates[i]);
-                }
-            }
-
-            var usedPoolIds = new HashSet<int>();
-            for (int m = 0; m < selectedMobs.Count; m++)
-            {
-                var mob = selectedMobs[m];
-                if (mob == null || !usedPoolIds.Add(mob.PoolId))
-                {
-                    continue;
-                }
-
-                if (IsDeadLikeMob(mob))
-                {
-                    continue;
-                }
-                if (!CanFireDamageEventForMob(mob, tick))
-                {
-                    _autoCaptureDmgSkippedCooldown++;
-                    continue;
-                }
-
-                _autoCaptureDmgAttempted++;
-                var damageTemplate = _autoCapturePointDamageTemplate;
-                int segmentCount = ResolveSegmentCountByTemplate(damageTemplate);
-                int availableByActiveDmg = Math.Max(0, _autoCaptureDamageNumberControl.MaxActiveNumbers - combat.ActiveDamageNumbers);
-                if (availableByActiveDmg <= 0)
-                {
-                    break;
-                }
-                segmentCount = Math.Min(segmentCount, availableByActiveDmg);
-
-                int emittedForMob = 0;
-                int baseDamage = RollAutoCapBaseDamageByTemplate(damageTemplate);
-                int maxSegmentOffset = 0;
-                for (int burst = 0; burst < segmentCount; burst++)
-                {
-                    if (combat.ActiveDamageNumbers >= _autoCaptureDamageNumberControl.MaxActiveNumbers)
-                    {
-                        break;
-                    }
-
-                    if (!IsMobInCameraView(mob))
-                    {
-                        break;
-                    }
-
-                    float xOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 42);
-                    float yOffset = (float)((_autoCaptureRandom.NextDouble() - 0.5) * 20);
-                    int segmentOffset = ResolveSegmentTickOffsetMs(damageTemplate, burst);
-                    int eventTick = tick + segmentOffset;
-                    if (segmentOffset > maxSegmentOffset)
-                    {
-                        maxSegmentOffset = segmentOffset;
-                    }
-
-                    if ((tuning?.DisableHitEffects != true) && (_autoCaptureHitEffectControl?.Enabled != false))
-                    {
-                        AutoCapNativeDamageSkillEntry selectedSkill = null;
-                        if (_autoCapturePointSkillPool.Count > 0)
-                        {
-                            selectedSkill = _autoCapturePointSkillPool[_autoCaptureRandom.Next(_autoCapturePointSkillPool.Count)];
-                        }
-                        else if (_autoCaptureNativeDamageSkillPool.Count > 0)
-                        {
-                            selectedSkill = _autoCaptureNativeDamageSkillPool[_autoCaptureRandom.Next(_autoCaptureNativeDamageSkillPool.Count)];
-                        }
-
-                        Color baseTint = PickAutoCaptureHitEffectTint();
-                        double alpha = PickAutoCaptureAlpha(_autoCaptureCurrentProfile);
-                        Color hitTint = baseTint * (float)alpha;
-                        float hitScale = PickAutoCaptureScale(_autoCaptureCurrentProfile);
-                        int hitLifetimeMs = PickAutoCaptureLifetimeMs(_autoCaptureCurrentProfile);
-                        int hitVariation = PickAutoCaptureHitVariation();
-                        int jitterXRange = Math.Max(0, _autoCaptureHitEffectControl?.JitterPxX ?? 48);
-                        int jitterYRange = Math.Max(0, _autoCaptureHitEffectControl?.JitterPxY ?? 28);
-                        HaCreator.MapSimulator.Character.Skills.SkillAnimation hitAnimation = selectedSkill?.CachedHitEffect;
-                        
-                        if (hitAnimation == null && selectedSkill != null && _playerManager?.SkillLoader != null)
-                        {
-                            SkillData fullSkillData = _playerManager.SkillLoader.LoadSkill(selectedSkill.SkillId);
-                            hitAnimation = fullSkillData?.HitEffect;
-                        }
-                        
-                        if (hitAnimation != null)
-                        {
-                            if (_autoCaptureRandom.NextDouble() > 0.98) // Occasional log to verify it's working
-                            {
-                                System.Console.WriteLine($"[AutoCap][閲囨牱] 瑙﹀彂鎶€鑳藉彈鍑荤壒鏁? SkillId={selectedSkill?.SkillId} Name={selectedSkill?.Name} Frames={hitAnimation.Frames.Count}");
-                            }
-                            // Real skills should not be wildly tinted. They should retain their original WZ colors.
-                            combat.AddSkillHitEffect(
-                                mob.CurrentX + xOffset,
-                                mob.CurrentY - 24 + yOffset,
-                                eventTick,
-                                hitAnimation,
-                                _autoCaptureRandom.NextDouble() > 0.5,
-                                Color.White * (float)alpha, // Force original colors
-                                hitScale);
-                        }
-                        else
-                        {
-                            combat.AddHitEffect(
-                                mob.CurrentX + xOffset,
-                                mob.CurrentY - 24 + yOffset,
-                                eventTick,
-                                hitVariation,
-                                _autoCaptureRandom.NextDouble() > 0.5,
-                                hitTint,
-                                hitScale,
-                                hitLifetimeMs);
-                        }
-
-                        // For real skill animations, duplicating them as "extra layers" with jitter looks broken and unrealistic.
-                        // We only apply the augmentation extra layers if we are falling back to the generic hit blobs.
-                        if (hitAnimation == null)
-                        {
-                            int extraEffects = PickAutoCaptureExtraLayers();
-                            if (_autoCaptureCurrentProfile == AutoCaptureProfile.HitOcclusionHeavy)
-                            {
-                                extraEffects = Math.Min(1, Math.Max(0, extraEffects));
-                            }
-                            if (_autoCaptureCurrentBucket == AutoCaptureDataBucket.ChaosOcclusion)
-                            {
-                                extraEffects = Math.Max(1, extraEffects);
-                            }
-                            if ((tuning?.HitExtraLayerMaxClamp ?? -1) >= 0)
-                            {
-                                extraEffects = Math.Min(extraEffects, tuning.HitExtraLayerMaxClamp);
-                            }
-
-                            for (int i = 0; i < extraEffects; i++)
-                            {
-                                int fx = _autoCaptureRandom.Next(-jitterXRange, jitterXRange + 1);
-                                int fy = _autoCaptureRandom.Next(-jitterYRange, jitterYRange + 1);
-                                int layerTick = eventTick + _autoCaptureRandom.Next(0, 100);
-                                Color layerTint = PickAutoCaptureHitEffectTint() * (float)alpha;
-                                float layerScale = PickAutoCaptureScale(_autoCaptureCurrentProfile);
-                                int layerLife = PickAutoCaptureLifetimeMs(_autoCaptureCurrentProfile);
-
-                                combat.AddHitEffect(mob.CurrentX + xOffset + fx, mob.CurrentY - 24 + yOffset + fy, layerTick, PickAutoCaptureHitVariation(), _autoCaptureRandom.NextDouble() > 0.5, layerTint, layerScale, layerLife);
-                            }
-                        }
-                    }
-
-                    int damage = RollAutoCapSegmentDamage(baseDamage, damageTemplate, burst);
-                    bool isCritical = RollAutoCapSegmentCritical(damageTemplate, burst);
-                    int comboIndex = burst % 6;
-                    combat.AddPlayerDamage(
-                        damage,
-                        mob.CurrentX + xOffset,
-                        mob.CurrentY - 24f + yOffset,
-                        isCritical,
-                        eventTick,
-                        comboIndex);
-
-                    _autoCaptureDmgLastGlobalTick = eventTick;
-                    _autoCaptureDmgLastTickByMob[mob.PoolId] = eventTick;
-                    _autoCaptureDmgFired++;
-                    _autoCaptureDmgSegmentsEmitted++;
-                    emittedForMob++;
-                }
-
-                if (emittedForMob > 0)
-                {
-                    _autoCaptureDmgLastGlobalTick = tick;
-                    _autoCaptureDmgEventsUsedOnCaptureFrame++;
-                    _autoCaptureDmgMobsHit++;
-                    _autoCaptureLastFrameDamageEventTriggered = true;
-                    _autoCaptureDmgMobsHitCurrentFrame++;
-                    if (_autoCaptureDmgMobsHitCurrentFrame > _autoCaptureDmgMobsHitPeakSinceLastLog)
-                    {
-                        _autoCaptureDmgMobsHitPeakSinceLastLog = _autoCaptureDmgMobsHitCurrentFrame;
-                    }
-                }
-            }
-        }
-
-        private int ResolveDynamicBoundEventFrameLimit(int visibleMobCount)
-        {
-            if (_autoCaptureDamageNumberControl == null)
-            {
-                return 1;
-            }
-
-            if (!_autoCaptureDamageNumberControl.UseMobRatioCap)
-            {
-                return Math.Max(1, _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame);
-            }
-
-            int raw = (int)Math.Round(
-                Math.Max(0, visibleMobCount) * _autoCaptureDamageNumberControl.MobRatio,
-                MidpointRounding.AwayFromZero);
-
-            int byRatio = ClampInt(
-                raw,
-                _autoCaptureDamageNumberControl.MinEventsPerCaptureFrame,
-                _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrameCap);
-
-            int hardCap = Math.Max(1, _autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame);
-            return ClampInt(byRatio, 1, hardCap);
-        }
-
-        private static int ClampInt(int value, int min, int max)
-        {
-            if (value < min) return min;
-            if (value > max) return max;
-            return value;
-        }
-
-        private Color PickAutoCaptureHitEffectTint()
-        {
-            var palette = _autoCaptureHitEffectControl?.PaletteMode == AutoCaptureHitEffectPaletteMode.Extended
-                ? AutoCapHitEffectTintPaletteExtended
-                : AutoCapHitEffectTintPaletteBasic;
-            if (_autoCaptureRandom == null || palette == null || palette.Length == 0)
-            {
-                return Color.White;
-            }
-            return palette[_autoCaptureRandom.Next(palette.Length)];
-        }
-
-        private int PickAutoCaptureHitVariation()
-        {
-            if (_autoCaptureRandom == null)
-            {
-                return 0;
-            }
-            var pool = _autoCaptureHitEffectControl?.VariationPool;
-            if (pool == null || pool.Count == 0)
-            {
-                return _autoCaptureRandom.Next(0, 4);
-            }
-            return pool[_autoCaptureRandom.Next(pool.Count)];
-        }
-
-        private int PickAutoCaptureExtraLayers()
-        {
-            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
-            {
-                return 0;
-            }
-            int min = _autoCaptureHitEffectControl.ExtraLayersMin;
-            int max = _autoCaptureHitEffectControl.ExtraLayersMax;
-            if (max <= min)
-            {
-                return Math.Max(0, min);
-            }
-            return _autoCaptureRandom.Next(min, max + 1);
-        }
-
-        private double PickAutoCaptureAlpha(AutoCaptureProfile profile)
-        {
-            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
-            {
-                return 0.70d;
-            }
-
-            double min = _autoCaptureHitEffectControl.AlphaMin;
-            double max = _autoCaptureHitEffectControl.AlphaMax;
-            if (profile == AutoCaptureProfile.HitOcclusionHeavy)
-            {
-                min = Math.Max(0.20d, min - 0.03d);
-                max = Math.Max(min, Math.Min(1.0d, max - 0.03d));
-            }
-            return min + ((max - min) * _autoCaptureRandom.NextDouble());
-        }
-
-        private float PickAutoCaptureScale(AutoCaptureProfile profile)
-        {
-            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
-            {
-                return 1.0f;
-            }
-
-            double min = _autoCaptureHitEffectControl.ScaleMin;
-            double max = _autoCaptureHitEffectControl.ScaleMax;
-            if (profile == AutoCaptureProfile.HitOcclusionHeavy)
-            {
-                min += 0.02d;
-                max += 0.08d;
-            }
-            min = Math.Clamp(min, 0.3d, 2.5d);
-            max = Math.Clamp(max, 0.3d, 2.5d);
-            if (max < min)
-            {
-                (min, max) = (max, min);
-            }
-            return (float)(min + ((max - min) * _autoCaptureRandom.NextDouble()));
-        }
-
-        private int PickAutoCaptureLifetimeMs(AutoCaptureProfile profile)
-        {
-            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
-            {
-                return 220;
-            }
-
-            int min = _autoCaptureHitEffectControl.LifetimeMsMin;
-            int max = _autoCaptureHitEffectControl.LifetimeMsMax;
-            if (profile == AutoCaptureProfile.HitOcclusionHeavy)
-            {
-                min = Math.Max(60, min - 10);
-                max = Math.Max(min + 1, max - 20);
-            }
-            min = Math.Clamp(min, 60, 2000);
-            max = Math.Clamp(max, 60, 2000);
-            if (max <= min)
-            {
-                return min;
-            }
-            return _autoCaptureRandom.Next(min, max + 1);
-        }
-
-        private AutoCapDamageTemplate PickAutoCapDamageTemplate(AutoCaptureProfile profile)
-        {
-            if (_autoCaptureRandom == null)
-            {
-                return AutoCapDamageTemplate.Single;
-            }
-
-            var configured = _autoCaptureDamageNumberControl?.TemplateWeights;
-            if (configured != null && configured.Count > 0)
-            {
-                var map = new Dictionary<AutoCapDamageTemplate, int>
-                {
-                    [AutoCapDamageTemplate.Single] = configured.TryGetValue(AutoCaptureDamageTemplateKind.Single, out int wSingle) ? wSingle : 0,
-                    [AutoCapDamageTemplate.DoubleTap] = configured.TryGetValue(AutoCaptureDamageTemplateKind.DoubleTap, out int wDouble) ? wDouble : 0,
-                    [AutoCapDamageTemplate.RapidCombo] = configured.TryGetValue(AutoCaptureDamageTemplateKind.RapidCombo, out int wRapid) ? wRapid : 0,
-                    [AutoCapDamageTemplate.StaggerCombo] = configured.TryGetValue(AutoCaptureDamageTemplateKind.StaggerCombo, out int wStagger) ? wStagger : 0,
-                    [AutoCapDamageTemplate.Finisher] = configured.TryGetValue(AutoCaptureDamageTemplateKind.Finisher, out int wFinisher) ? wFinisher : 0
-                };
-                int total = map.Values.Where(v => v > 0).Sum();
-                if (total > 0)
-                {
-                    int rollByWeight = _autoCaptureRandom.Next(total);
-                    int accByWeight = 0;
-                    foreach (var kv in map)
-                    {
-                        if (kv.Value <= 0)
-                        {
-                            continue;
-                        }
-                        accByWeight += kv.Value;
-                        if (rollByWeight < accByWeight)
-                        {
-                            return kv.Key;
-                        }
-                    }
-                }
-            }
-
-            int roll = _autoCaptureRandom.Next(100);
-            return profile switch
-            {
-                AutoCaptureProfile.AttackHeavy => roll switch
-                {
-                    < 12 => AutoCapDamageTemplate.Single,
-                    < 34 => AutoCapDamageTemplate.DoubleTap,
-                    < 68 => AutoCapDamageTemplate.RapidCombo,
-                    < 88 => AutoCapDamageTemplate.StaggerCombo,
-                    _ => AutoCapDamageTemplate.Finisher
-                },
-                AutoCaptureProfile.HitOcclusionHeavy => roll switch
-                {
-                    < 18 => AutoCapDamageTemplate.Single,
-                    < 40 => AutoCapDamageTemplate.DoubleTap,
-                    < 72 => AutoCapDamageTemplate.RapidCombo,
-                    < 90 => AutoCapDamageTemplate.StaggerCombo,
-                    _ => AutoCapDamageTemplate.Finisher
-                },
-                AutoCaptureProfile.DeathHeavy => roll switch
-                {
-                    < 48 => AutoCapDamageTemplate.Single,
-                    < 78 => AutoCapDamageTemplate.DoubleTap,
-                    < 90 => AutoCapDamageTemplate.RapidCombo,
-                    < 97 => AutoCapDamageTemplate.StaggerCombo,
-                    _ => AutoCapDamageTemplate.Finisher
-                },
-                _ => roll switch
-                {
-                    < 36 => AutoCapDamageTemplate.Single,
-                    < 66 => AutoCapDamageTemplate.DoubleTap,
-                    < 86 => AutoCapDamageTemplate.RapidCombo,
-                    < 96 => AutoCapDamageTemplate.StaggerCombo,
-                    _ => AutoCapDamageTemplate.Finisher
-                }
-            };
-        }
-
-        private int ResolveSegmentCountByTemplate(AutoCapDamageTemplate template)
-        {
-            if (_autoCaptureRandom == null)
-            {
-                return 1;
-            }
-
-            return template switch
-            {
-                AutoCapDamageTemplate.Single => 1,
-                AutoCapDamageTemplate.DoubleTap => _autoCaptureRandom.Next(2, 4),
-                AutoCapDamageTemplate.RapidCombo => _autoCaptureRandom.Next(3, 7),
-                AutoCapDamageTemplate.StaggerCombo => _autoCaptureRandom.Next(3, 6),
-                AutoCapDamageTemplate.Finisher => _autoCaptureRandom.Next(2, 5),
-                _ => 1
-            };
-        }
-
-        private static readonly int[] AutoCapRapidTickOffsets = { 0, 8, 16, 24, 34, 46 };
-        private static readonly int[] AutoCapStaggerTickOffsets = { 0, 14, 30, 52, 80 };
-        private static readonly int[] AutoCapFinisherTickOffsets = { 0, 18, 42, 84 };
-
-        private int ResolveSegmentTickOffsetMs(AutoCapDamageTemplate template, int segmentIndex)
-        {
-            if (segmentIndex <= 0)
-            {
-                return 0;
-            }
-
-            return template switch
-            {
-                AutoCapDamageTemplate.Single => 0,
-                AutoCapDamageTemplate.DoubleTap => 18 * segmentIndex,
-                AutoCapDamageTemplate.RapidCombo => ResolveTickOffsetFromTable(AutoCapRapidTickOffsets, segmentIndex, 14),
-                AutoCapDamageTemplate.StaggerCombo => ResolveTickOffsetFromTable(AutoCapStaggerTickOffsets, segmentIndex, 24),
-                AutoCapDamageTemplate.Finisher => ResolveTickOffsetFromTable(AutoCapFinisherTickOffsets, segmentIndex, 30),
-                _ => 14 * segmentIndex
-            };
-        }
-
-        private static int ResolveTickOffsetFromTable(int[] table, int segmentIndex, int tailStep)
-        {
-            if (table == null || table.Length == 0)
-            {
-                return segmentIndex * Math.Max(1, tailStep);
-            }
-
-            if (segmentIndex < table.Length)
-            {
-                return table[segmentIndex];
-            }
-
-            int last = table[table.Length - 1];
-            int extra = segmentIndex - (table.Length - 1);
-            return last + (extra * Math.Max(1, tailStep));
-        }
-
-        private int RollAutoCapBaseDamageByTemplate(AutoCapDamageTemplate template)
-        {
-            if (_autoCaptureRandom == null)
-            {
-                return 5000;
-            }
-
-            return template switch
-            {
-                AutoCapDamageTemplate.Single => _autoCaptureRandom.Next(8000, 140000),
-                AutoCapDamageTemplate.DoubleTap => _autoCaptureRandom.Next(9000, 160000),
-                AutoCapDamageTemplate.RapidCombo => _autoCaptureRandom.Next(12000, 220000),
-                AutoCapDamageTemplate.StaggerCombo => _autoCaptureRandom.Next(15000, 240000),
-                AutoCapDamageTemplate.Finisher => _autoCaptureRandom.Next(18000, 280000),
-                _ => _autoCaptureRandom.Next(8000, 140000)
-            };
-        }
-
-        private int RollAutoCapSegmentDamage(int baseDamage, AutoCapDamageTemplate template, int segmentIndex)
-        {
-            if (_autoCaptureRandom == null)
-            {
-                return Math.Max(1, baseDamage);
-            }
-
-            double jitter = 0.88d + (_autoCaptureRandom.NextDouble() * 0.28d);
-            double factor = template switch
-            {
-                AutoCapDamageTemplate.Single => 1.00d,
-                AutoCapDamageTemplate.DoubleTap => segmentIndex == 0 ? 1.00d : 0.90d,
-                AutoCapDamageTemplate.RapidCombo => Math.Max(0.62d, 1.02d - (segmentIndex * 0.08d)),
-                AutoCapDamageTemplate.StaggerCombo => 0.78d + (segmentIndex * 0.14d),
-                AutoCapDamageTemplate.Finisher => segmentIndex == 0 ? 0.62d : 0.85d + (segmentIndex * 0.22d),
-                _ => 1.00d
-            };
-
-            int value = (int)Math.Round(baseDamage * factor * jitter);
-            return Math.Clamp(value, 1200, 999999);
-        }
-
-        private bool RollAutoCapSegmentCritical(AutoCapDamageTemplate template, int segmentIndex)
-        {
-            if (_autoCaptureRandom == null)
-            {
-                return false;
-            }
-
-            double chance = template switch
-            {
-                AutoCapDamageTemplate.Single => 0.22d,
-                AutoCapDamageTemplate.DoubleTap => segmentIndex == 0 ? 0.22d : 0.28d,
-                AutoCapDamageTemplate.RapidCombo => 0.18d,
-                AutoCapDamageTemplate.StaggerCombo => 0.20d + (segmentIndex * 0.03d),
-                AutoCapDamageTemplate.Finisher => segmentIndex >= 1 ? 0.42d : 0.18d,
-                _ => 0.22d
-            };
-            return _autoCaptureRandom.NextDouble() < Math.Clamp(chance, 0.05d, 0.65d);
-        }
-
-        #endif
-
-        private List<MobItem> BuildDamageEventCandidates(List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)
-        {
-            var list = new List<MobItem>();
-            if (forceStateMobs != null && forceStateMobs.Count > 0)
-            {
-                list.AddRange(forceStateMobs
-                    .Where(m => !IsDeadLikeMob(m))
-                    .Where(IsMobInCameraView)
-                    .OrderBy(m => DistanceToCameraCenterSq(m)));
-            }
-            if (fallbackMobs != null && fallbackMobs.Count > 0)
-            {
-                list.AddRange(fallbackMobs
-                    .Where(m => !IsDeadLikeMob(m))
-                    .Where(IsMobInCameraView)
-                    .OrderBy(m => DistanceToCameraCenterSq(m)));
-            }
-            return list;
-        }
-
-        #if false
-        private bool IsMobInCameraView(MobItem mob)
-        {
-            if (mob == null)
-            {
-                return false;
-            }
-
-            int marginX = Math.Min(AutoCapViewSafeMarginPx, Math.Max(8, _renderParams.RenderWidth / 6));
-            int marginY = Math.Min(AutoCapViewSafeMarginPx, Math.Max(8, _renderParams.RenderHeight / 6));
-
-            float worldLeft = mapShiftX - _mapCenterX + marginX;
-            float worldTop = mapShiftY - _mapCenterY + marginY;
-            float worldRight = mapShiftX - _mapCenterX + _renderParams.RenderWidth - marginX;
-            float worldBottom = mapShiftY - _mapCenterY + _renderParams.RenderHeight - marginY;
-
-            float x = mob.CurrentX;
-            float y = mob.CurrentY;
-            return x >= worldLeft && x <= worldRight && y >= worldTop && y <= worldBottom;
-        }
-
-        private double DistanceToCameraCenterSq(MobItem mob)
-        {
-            if (mob == null)
-            {
-                return double.MaxValue;
-            }
-
-            double centerX = mapShiftX;
-            double centerY = mapShiftY;
-            double dx = mob.CurrentX - centerX;
-            double dy = mob.CurrentY - centerY;
-            return dx * dx + dy * dy;
-        }
-
-        private bool CanFireDamageEventForMob(MobItem mob, int tick)
-        {
-            if (mob == null)
-            {
-                return false;
-            }
-            if (IsDeadLikeMob(mob))
-            {
-                return false;
-            }
-
-            int globalElapsed = unchecked(tick - _autoCaptureDmgLastGlobalTick);
-            if (globalElapsed < _autoCaptureDamageNumberControl.GlobalCooldownMs)
-            {
-                return false;
-            }
-
-            if (_autoCaptureDmgLastTickByMob.TryGetValue(mob.PoolId, out int lastPerMobTick))
-            {
-                int perMobElapsed = unchecked(tick - lastPerMobTick);
-                if (perMobElapsed < _autoCaptureDamageNumberControl.PerMobCooldownMs)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        private static int ResolveMobLabelClassId(MobItem mob)
-        {
-            if (mob == null)
-            {
-                return AutoCapClassMobDead;
-            }
-
-            if ((mob.AI?.IsDead ?? false) || mob.IsDeathAnimationComplete || IsDeathLikeAction(mob.CurrentAction))
-            {
-                return AutoCapClassMobDead;
-            }
-
-            return AutoCapClassMobActive;
-        }
-
 
         // Debug rendering data (collected during draw, rendered in separate pass)
         private struct DebugDrawData
@@ -1579,7 +285,10 @@ namespace HaCreator.MapSimulator
         private DebugDrawData[] _debugNpcData;
         private DebugDrawData[] _debugPortalData;
         private DebugDrawData[] _debugReactorData;
-
+        private int _debugMobCount;
+        private int _debugNpcCount;
+        private int _debugPortalCount;
+        private int _debugReactorCount;
 
         // Cached StringBuilder for debug text to avoid GC allocations every frame
         private readonly StringBuilder _debugStringBuilder = new StringBuilder(256);
@@ -1622,33 +331,22 @@ namespace HaCreator.MapSimulator
             Content.RootDirectory = "Content";
 
             Window.ClientSizeChanged += Window_ClientSizeChanged;
-            bool autoCapCompatMode = IsAutoCaptureEnabled;
 
             _DxDeviceManager = new GraphicsDeviceManager(this)
             {
-                SynchronizeWithVerticalRetrace = !autoCapCompatMode,
-                HardwareModeSwitch = !autoCapCompatMode,
-                GraphicsProfile = autoCapCompatMode ? GraphicsProfile.Reach : GraphicsProfile.HiDef,
+                SynchronizeWithVerticalRetrace = true,
+                HardwareModeSwitch = true,
+                GraphicsProfile = GraphicsProfile.HiDef,
                 IsFullScreen = false,
-                PreferMultiSampling = !autoCapCompatMode,
+                PreferMultiSampling = true,
                 SupportedOrientations = DisplayOrientation.Default,
                 PreferredBackBufferWidth = Math.Max(_renderParams.RenderWidth, 1),
                 PreferredBackBufferHeight = Math.Max(_renderParams.RenderHeight, 1),
                 PreferredBackBufferFormat = SurfaceFormat.Color/* | SurfaceFormat.Bgr32 | SurfaceFormat.Dxt1| SurfaceFormat.Dxt5*/,
-                PreferredDepthStencilFormat = autoCapCompatMode ? DepthFormat.None : DepthFormat.Depth24Stencil8,
+                PreferredDepthStencilFormat = DepthFormat.Depth24Stencil8, 
             };
-            _DxDeviceManager.PreparingDeviceSettings += graphics_PreparingDeviceSettings;
             _DxDeviceManager.DeviceCreated += graphics_DeviceCreated;
-            try
-            {
-                _DxDeviceManager.ApplyChanges();
-            }
-            catch (Exception ex) when (IsAutoCaptureEnabled)
-            {
-                System.Console.WriteLine("[AutoCap][Graphics Device Warning] First device creation failed, retrying with compatible settings");
-                ForceAutoCaptureCompatibleGraphicsSettings();
-                _DxDeviceManager.ApplyChanges();
-            }
+            _DxDeviceManager.ApplyChanges();
 
             // Initialize rendering manager
             _renderingManager = new RenderingManager(
@@ -1659,41 +357,6 @@ namespace HaCreator.MapSimulator
         }
 
         #region Loading and unloading
-        private void graphics_PreparingDeviceSettings(object sender, PreparingDeviceSettingsEventArgs e)
-        {
-            if (!IsAutoCaptureEnabled || e?.GraphicsDeviceInformation == null)
-            {
-                return;
-            }
-
-            e.GraphicsDeviceInformation.GraphicsProfile = GraphicsProfile.Reach;
-            var pp = e.GraphicsDeviceInformation.PresentationParameters;
-            if (pp != null)
-            {
-                pp.MultiSampleCount = 0;
-                pp.DepthStencilFormat = DepthFormat.None;
-                pp.IsFullScreen = false;
-            }
-        }
-
-        private void ForceAutoCaptureCompatibleGraphicsSettings()
-        {
-            if (_DxDeviceManager == null)
-            {
-                return;
-            }
-
-            _DxDeviceManager.SynchronizeWithVerticalRetrace = false;
-            _DxDeviceManager.HardwareModeSwitch = false;
-            _DxDeviceManager.GraphicsProfile = GraphicsProfile.Reach;
-            _DxDeviceManager.IsFullScreen = false;
-            _DxDeviceManager.PreferMultiSampling = false;
-            _DxDeviceManager.PreferredBackBufferFormat = SurfaceFormat.Color;
-            _DxDeviceManager.PreferredDepthStencilFormat = DepthFormat.None;
-            _DxDeviceManager.PreferredBackBufferWidth = Math.Max(_renderParams.RenderWidth, 1);
-            _DxDeviceManager.PreferredBackBufferHeight = Math.Max(_renderParams.RenderHeight, 1);
-        }
-
         void graphics_DeviceCreated(object sender, EventArgs e)
         {
         }
@@ -1770,20 +433,8 @@ namespace HaCreator.MapSimulator
             this._renderParams = new RenderParameters(RenderWidth, RenderHeight, RenderObjectScaling, mapRenderResolution);
         }
 
-        private IPC.GymServer _gymServer;
-        private bool _gymMode = false;
-        private float _gymTargetX = 0f;
-        private float _gymTargetY = 0f;
-
         protected override void Initialize()
         {
-            // Gym IPC 婵炲濮撮幊搴★耿椤忓懐顩查柕鍫濆闂夊秹鎮圭€ｎ亜鏆㈤柣锔诲灠铻ｉ柍銉ョ－绾偓婵炴垶鎸搁鍛村箚鎼淬劍鍋ㄦい顓熷笧缁€鍫縰toCap 濠碘槅鍨埀顒€纾涵鈧紓浣稿€烽懗鍫曞极閵堝洨鍗氭い鏍ㄨ壘缂嶆捇鏌ｉ埡鍌氱仴闁诡垰顦甸弻鍡涘垂椤旂厧璧嬮梺鍛婂姌鐏忔瑩鎮版繝鍥?
-            if (!IsAutoCaptureEnabled)
-            {
-                _gymServer = new IPC.GymServer();
-                _gymServer.Start(5555);
-            }
-            
             // TODO: Add your initialization logic here
 
             // Create map layers
@@ -1858,7 +509,7 @@ namespace HaCreator.MapSimulator
             _gameState.IsBigBang2Update = WzFileManager.IsBigBang2Update(uiWindow2Image); // chaos update
 
             // BGM
-            if (!IsAutoCaptureAudioMuted && Program.InfoManager.BGMs.ContainsKey(_mapBoard.MapInfo.bgm))
+            if (Program.InfoManager.BGMs.ContainsKey(_mapBoard.MapInfo.bgm))
             {
                 _currentBgmName = _mapBoard.MapInfo.bgm;
                 _audio = new WzSoundResourceStreamer(Program.InfoManager.BGMs[_mapBoard.MapInfo.bgm], true);
@@ -1867,18 +518,9 @@ namespace HaCreator.MapSimulator
                     _audio.Play();
                 }
             }
-            else if (IsAutoCaptureAudioMuted)
-            {
-                _currentBgmName = null;
-                _audio = null;
-            }
 
             // Sound effects from Sound.wz/Game.img - using SoundManager for concurrent playback
             _soundManager = new SoundManager();
-            if (IsAutoCaptureAudioMuted)
-            {
-                _soundManager.Volume = 0f;
-            }
             WzImage soundGameImage = Program.FindImage("Sound", "Game.img");
             if (soundGameImage != null)
             {
@@ -2333,7 +975,6 @@ namespace HaCreator.MapSimulator
                 obj.MSTagSpine = null; // cleanup
             }
             usedProps.Clear();
-            InitializeAutoCaptureIfNeeded();
 
         }
 
@@ -2374,13 +1015,6 @@ namespace HaCreator.MapSimulator
 
         protected override void UnloadContent()
         {
-            try
-            {
-                _gymServer?.Dispose();
-                _gymServer = null;
-            }
-            catch { }
-
             if (_audio != null)
             {
                 //_audio.Pause();
@@ -2576,12 +1210,6 @@ namespace HaCreator.MapSimulator
 
             // BGM - only reload if different from current BGM
             string newBgmName = _mapBoard.MapInfo.bgm;
-            if (IsAutoCaptureAudioMuted && _audio != null)
-            {
-                _audio.Dispose();
-                _audio = null;
-                _currentBgmName = null;
-            }
             if (_currentBgmName != newBgmName)
             {
                 // Different BGM - dispose old and load new
@@ -2591,7 +1219,7 @@ namespace HaCreator.MapSimulator
                     _audio = null;
                 }
 
-                if (!IsAutoCaptureAudioMuted && Program.InfoManager.BGMs.ContainsKey(newBgmName))
+                if (Program.InfoManager.BGMs.ContainsKey(newBgmName))
                 {
                     _currentBgmName = newBgmName;
                     _audio = new WzSoundResourceStreamer(Program.InfoManager.BGMs[newBgmName], true);
@@ -2600,7 +1228,6 @@ namespace HaCreator.MapSimulator
                 else
                 {
                     _currentBgmName = null;
-                    _audio = null;
                 }
             }
             // If same BGM, just keep playing - no changes needed
@@ -2921,7 +1548,6 @@ namespace HaCreator.MapSimulator
                 obj.MSTagSpine = null;
             }
             usedProps.Clear();
-            InitializeAutoCaptureIfNeeded();
         }
 
         /// <summary>
@@ -3138,7 +1764,7 @@ namespace HaCreator.MapSimulator
                 }
                 if (mobImage == null && Program.WzManager != null)
                 {
-                    mobImage = Program.WzManager.FindWzImageByName("mob", mobImgName) as WzImage;
+                    mobImage = (WzImage)Program.WzManager.FindWzImageByName("mob", mobImgName);
                 }
 
                 if (mobImage != null)
@@ -3275,50 +1901,9 @@ namespace HaCreator.MapSimulator
         {
             float frameRate = 1 / (float)gameTime.ElapsedGameTime.TotalSeconds;
             currTickCount = Environment.TickCount;
-            // Use fixed delta for Gym Mode to ensure physics stability (1/60s per step)
-            float delta = _gymMode ? (1f / 60f) : (gameTime.ElapsedGameTime.Milliseconds / 1000f);
-            
+            float delta = gameTime.ElapsedGameTime.Milliseconds / 1000f;
             KeyboardState newKeyboardState = Keyboard.GetState();  // get the newest state
             MouseState newMouseState = mouseCursor.MouseState;
-
-            // Toggle Gym Mode (Sim2Real RL Environment)
-            if (newKeyboardState.IsKeyUp(Keys.F3) && _oldKeyboardState.IsKeyDown(Keys.F3))
-            {
-                _gymMode = !_gymMode;
-                if (_gymServer != null) _gymServer.ClearAction();
-                System.Console.WriteLine($"[Gym Server] Mode: {(_gymMode ? "ON" : "OFF")}");
-            }
-
-            // --- GYM SERVER SYNCHRONOUS STEPPING ---
-            if (_gymMode)
-            {
-                if (_gymServer?.PendingAction == null)
-                {
-                    _oldKeyboardState = newKeyboardState;
-                    _oldMouseState = newMouseState;
-                    // Freeze game tick until action is received
-                    return;
-                }
-            }
-
-            if (IsAutoCaptureEnabled)
-            {
-                // 闂佺厧顨庢禍婊勬叏閳哄懏鐓傞柛銉墯閼茬姵淇婇妞诲亾瀹曞洨顢呮繛鎴炴尭椤戝洭寮潏鈺傚闁告劑鍔岄濠囨煕閿濆啫濮傞柍鐟扮Ч瀹曟繈濡歌缁佹煡鏌￠崼銏犵殤缂佽鲸绻勭划瀣媴閻戞ɑ娈㈡繛瀛樼矊閹碱偅瀵奸幇顓熺秶闁规儳鍟垮鍐层€掑顓犵畾缂佸倸妫濇俊?
-                TickAutoCaptureCamera();
-                if (_autoCaptureCameraPhase == AutoCaptureCameraPhase.Complete)
-                {
-                    _datasetGenerator.StopGeneration();
-                    if (_datasetGenerator.CapturedFrameCount != _autoCaptureExpectedFrameCount)
-                    {
-                        throw new InvalidOperationException(
-                            $"E_AUTOCAP_SAMPLE_SHORTFALL: expected={_autoCaptureExpectedFrameCount}, actual={_datasetGenerator.CapturedFrameCount}");
-                    }
-                    System.Console.WriteLine(
-                        $"[AutoCap] map={_autoCaptureOptions.MapId:D9} res={_autoCaptureOptions.ResolutionName} done frames={_datasetGenerator.CapturedFrameCount}");
-                    Exit();
-                    return;
-                }
-            }
 
             // Update UI Windows - handles ESC to close windows and I/E/S/Q toggles
             // Pass chat state to prevent hotkeys from working while typing
@@ -3409,8 +1994,8 @@ namespace HaCreator.MapSimulator
             }
 
             // Handle pending map change with fade effect (matching official client behavior)
-            // Flow for different map: Portal activated 闂?Fade Out (600ms) 闂?Map Change 闂?Fade In (600ms)
-            // Flow for same map: Portal activated 闂?Delay 闂?Teleport (no fade)
+            // Flow for different map: Portal activated → Fade Out (600ms) → Map Change → Fade In (600ms)
+            // Flow for same map: Portal activated → Delay → Teleport (no fade)
             if (_gameState.PendingMapChange && _loadMapCallback != null)
             {
                 // Check if teleporting within the same map - use delay instead of fade
@@ -3558,14 +2143,8 @@ namespace HaCreator.MapSimulator
                     this._gameState.HideUIMode = !this._gameState.HideUIMode;
                 }
             }
-            // (F3 Check Moved up)
 
             // Debug keys
-            if (newKeyboardState.IsKeyUp(Keys.F4) && _oldKeyboardState.IsKeyDown(Keys.F4))
-            {
-                _datasetGenerator.ToggleGeneration();
-            }
-
             if (newKeyboardState.IsKeyUp(Keys.F5) && _oldKeyboardState.IsKeyDown(Keys.F5))
             {
                 this._gameState.ShowDebugMode = !this._gameState.ShowDebugMode;
@@ -3877,10 +2456,7 @@ namespace HaCreator.MapSimulator
             // Update combat effects (damage numbers, hit effects, HP bars)
             _combatEffects.Update(currTickCount, deltaSeconds);
             _combatEffects.SyncFromMobPool(_mobPool, currTickCount);
-            if (!IsAutoCaptureEnabled)
-            {
-                _combatEffects.SyncHPBarsFromMobPool(_mobPool, currTickCount);
-            }
+            _combatEffects.SyncHPBarsFromMobPool(_mobPool, currTickCount);
 
             // Update particle system
             _particleSystem.Update(currTickCount, deltaSeconds);
@@ -3890,67 +2466,6 @@ namespace HaCreator.MapSimulator
             if (_playerManager != null)
             {
                 _playerManager.IsPlayerControlEnabled = _gameState.PlayerControlEnabled;
-                _playerManager.IsGymControlled = _gymMode;
-                
-                // Inject Gym RL Action
-                if (_gymMode && _gymServer?.PendingAction != null && _playerManager.Player != null)
-                {
-                    var act = _gymServer.PendingAction;
-                    
-                    if (act.Reset)
-                    {
-                        var footholds = _mapBoard?.BoardItems?.FootholdLines;
-                        if (footholds != null && footholds.Count > 0)
-                        {
-                            var rnd = new Random();
-                            var startFh = footholds[rnd.Next(footholds.Count)];
-                            float startX = (startFh.FirstDot.X + startFh.SecondDot.X) / 2f;
-                            float startY = (startFh.FirstDot.Y + startFh.SecondDot.Y) / 2f - 20f;
-                            
-                            _playerManager.TeleportTo(startX, startY);
-                            if (_playerManager.Player.Physics != null)
-                            {
-                                _playerManager.Player.Physics.VelocityX = 0;
-                                _playerManager.Player.Physics.VelocityY = 0;
-                            }
-                            
-                            if (act.TargetX == 0 && act.TargetY == 0)
-                            {
-                                FootholdLine targetFh = null;
-                                // Try up to 50 times to find a foothold far enough away
-                                for (int i = 0; i < 50; i++)
-                                {
-                                    var candidate = footholds[rnd.Next(footholds.Count)];
-                                    float candX = (candidate.FirstDot.X + candidate.SecondDot.X) / 2f;
-                                    float candY = (candidate.FirstDot.Y + candidate.SecondDot.Y) / 2f - 20f;
-                                    
-                                    float distSq = (candX - startX) * (candX - startX) + (candY - startY) * (candY - startY);
-                                    if (distSq > 300f * 300f) // Must be at least 300 pixels away
-                                    {
-                                        targetFh = candidate;
-                                        break;
-                                    }
-                                }
-                                
-                                // Fallback if map is too small
-                                if (targetFh == null) targetFh = footholds[rnd.Next(footholds.Count)];
-                                
-                                _gymTargetX = (targetFh.FirstDot.X + targetFh.SecondDot.X) / 2f;
-                                _gymTargetY = (targetFh.FirstDot.Y + targetFh.SecondDot.Y) / 2f - 20f;
-                            }
-                            else
-                            {
-                                _gymTargetX = act.TargetX;
-                                _gymTargetY = act.TargetY;
-                            }
-                        }
-                    }
-                    else
-                    {
-                        _playerManager.Player.SetInput(act.Left, act.Right, act.Up, act.Down, act.Jump, false, false);
-                    }
-                }
-                
                 _playerManager.Update(currTickCount, deltaSeconds, _chat.IsActive);
 
                 // Update camera controller based on player/camera mode
@@ -4071,122 +2586,6 @@ namespace HaCreator.MapSimulator
 
             // Cleanup finished sound instances
             _soundManager?.Update();
-
-            // --- DATASET GENERATOR DATA AUGMENTATION ---
-            if (_datasetGenerator.IsGenerating)
-            {
-                ApplyAutoCaptureAugmentation(currTickCount);
-            }
-            // --- GYM SERVER STATE EXPORT ---
-            if (_gymMode && _gymServer?.PendingAction != null)
-            {
-                var state = new IPC.GymState();
-                if (_playerManager?.Player != null)
-                {
-                    var p = _playerManager.Player;
-                    state.X = p.X;
-                    state.Y = p.Y;
-                    state.VX = (float)(p.Physics?.VelocityX ?? 0.0);
-                    state.VY = (float)(p.Physics?.VelocityY ?? 0.0);
-                    state.IsGrounded = p.Physics?.IsOnFoothold() ?? false;
-                    
-                    var currentFh = p.Physics?.CurrentFoothold;
-                    if (currentFh != null)
-                    {
-                        state.DistLeftEdge = p.X - currentFh.FirstDot.X;
-                        state.DistRightEdge = currentFh.SecondDot.X - p.X;
-                    }
-                    else
-                    {
-                        state.DistLeftEdge = 9999f;
-                        state.DistRightEdge = 9999f;
-                    }
-                    
-                    state.TargetX = _gymTargetX;
-                    state.TargetY = _gymTargetY;
-                    
-                    // Simple distance check to see if we reached the goal
-                    float dx = p.X - _gymTargetX;
-                    float dy = p.Y - _gymTargetY;
-                    state.IsDone = (dx * dx + dy * dy) < (50f * 50f);
-                    
-                    // --- Ladder Vision ---
-                    var ropes = _mapBoard?.BoardItems?.Ropes;
-                    float minDistSq = float.MaxValue;
-                    state.NearestLadderX = 9999f;
-                    state.NearestLadderTop = 9999f;
-                    state.NearestLadderBottom = 9999f;
-                    state.IsOverlappingLadder = false;
-
-                    if (ropes != null)
-                    {
-                        foreach (var rope in ropes)
-                        {
-                            float ropeX = rope.FirstAnchor.X;
-                            float ropeTop = Math.Min(rope.FirstAnchor.Y, rope.SecondAnchor.Y);
-                            float ropeBottom = Math.Max(rope.FirstAnchor.Y, rope.SecondAnchor.Y);
-                            
-                            float dxLadder = p.X - ropeX;
-                            float midY = (ropeTop + ropeBottom) / 2f;
-                            float dyLadder = p.Y - midY;
-                            
-                            float distSq = dxLadder * dxLadder + dyLadder * dyLadder;
-                            
-                            if (distSq < minDistSq)
-                            {
-                                minDistSq = distSq;
-                                state.NearestLadderX = ropeX;
-                                state.NearestLadderTop = ropeTop;
-                                state.NearestLadderBottom = ropeBottom;
-                            }
-                            
-                            // Check overlap (within 50px horizontally, and vertically within bounds)
-                            if (Math.Abs(dxLadder) <= 50f && p.Y >= ropeTop && p.Y <= ropeBottom)
-                            {
-                                state.IsOverlappingLadder = true;
-                            }
-                        }
-                    }
-                    
-                    // --- Portal Vision ---
-                    var portals = _portalPool?.Portals;
-                    float minPortalDistSq = float.MaxValue;
-                    state.NearestPortalX = 9999f;
-                    state.NearestPortalY = 9999f;
-                    state.IsOverlappingPortal = false;
-
-                    if (portals != null)
-                    {
-                        foreach (var portal in portals)
-                        {
-                            var inst = portal?.PortalInstance;
-                            if (inst == null) continue;
-                            // Only care about portals that can be entered (usually Normal or Hidden)
-                            // We ignore StartPoints since they can't be entered
-                            if (inst.pt == PortalType.StartPoint) continue;
-                            
-                            float dxPortal = p.X - inst.X;
-                            float dyPortal = p.Y - inst.Y;
-                            float distSq = dxPortal * dxPortal + dyPortal * dyPortal;
-                            
-                            if (distSq < minPortalDistSq)
-                            {
-                                minPortalDistSq = distSq;
-                                state.NearestPortalX = inst.X;
-                                state.NearestPortalY = inst.Y;
-                            }
-                            
-                            // Check overlap (within ~30px)
-                            if (Math.Abs(dxPortal) <= 30f && Math.Abs(dyPortal) <= 40f)
-                            {
-                                state.IsOverlappingPortal = true;
-                            }
-                        }
-                    }
-                }
-                _gymServer.SendState(state);
-                _gymServer.ClearAction();
-            }
 
             base.Update(gameTime);
         }
@@ -4834,177 +3233,13 @@ namespace HaCreator.MapSimulator
             }
         }
 
-        private int LoadAutoCaptureRealSkillEffects()
+        private void LoadAnimationFrames(WzSubProperty container, List<IDXObject> frames)
         {
-            if (_autoCaptureRealSkillEffectControl == null || !_autoCaptureRealSkillEffectControl.Enabled)
-                return 0;
-
-            System.Console.WriteLine("[AutoCap] Loading real skill hit effects from Skill.wz...");
-            
-            // Typical hit effect paths for diverse visual occlusion
-            // Note: DataSource helper methods typically append .img automatically, 
-            // so we use the base name here.
-            var skillsToLoad = new Dictionary<int, (string imgName, string skillId)>
+            for (int f = 0; f < 10; f++)
             {
-                { 0, ("212", "2121003") }, // Fire/Poison hit
-                { 1, ("222", "2221006") }, // Ice/Lightning hit
-                { 2, ("122", "1221011") }, // Paladin Holy hit
-                { 3, ("322", "3221007") }, // Marksman hit
-                { 4, ("422", "4221001") }  // Shadower hit
-            };
-
-            int loadedCount = 0;
-            foreach (var kv in skillsToLoad)
-            {
-                try
-                {
-                    // FindWzObject handles category ("Skill") and image/directory name.
-                    // For ImgFileSystemDataSource, "212" will resolve to "Skill/212.img"
-                    var skillImg = Program.FindWzObject("Skill", kv.Value.imgName) as WzImage;
-                    if (skillImg == null)
-                    {
-                        System.Console.WriteLine($"[AutoCap][璇婃柇] Skill image not found: Skill/{kv.Value.imgName}");
-                        continue;
-                    }
-                    
-                    System.Console.WriteLine($"[AutoCap][璇婃柇] Skill image loaded: Skill/{kv.Value.imgName}");
-                    
-                    if (!skillImg.Parsed) skillImg.ParseImage();
-                    
-                    // Use FindWzObject for full path which handles parsing better than manual indexing
-                    string relativeHitPath = $"{kv.Value.imgName}/skill/{kv.Value.skillId}/hit";
-                    var hitNode = Program.FindWzObject("Skill", relativeHitPath) as WzImageProperty;
-                    
-                    if (hitNode == null)
-                    {
-                        // Last ditch attempt via image object
-                        hitNode = skillImg["skill"]?[kv.Value.skillId]?["hit"];
-                    }
-
-                    if (hitNode != null)
-                    {
-                        // Ensure it's fully linked if it's a UOL
-                        hitNode = hitNode.GetLinkedWzImageProperty();
-                        
-                        System.Console.WriteLine($"[AutoCap][璇婃柇] Hit node resolved for skill {kv.Value.skillId} (Type: {hitNode.GetType().Name}, Props: {hitNode.WzProperties?.Count ?? 0})");
-                        var frames = new List<IDXObject>();
-                        
-                        if (hitNode is WzCanvasProperty canvasNode)
-                        {
-                            LoadSingleFrame(canvasNode, frames);
-                        }
-                        else
-                        {
-                            LoadAnimationFrames(hitNode, frames);
-                        }
-
-                        if (frames.Count > 0)
-                        {
-                            _combatEffects.SetHitEffectFrames(kv.Key, frames);
-                            loadedCount++;
-                            System.Console.WriteLine($"[AutoCap][璇婃柇] Successfully loaded skill effect {kv.Value.skillId} ({frames.Count} frames)");
-                        }
-                        else
-                        {
-                            System.Console.WriteLine($"[AutoCap][璇婃柇] No frames loaded for hit node of skill {kv.Value.skillId}");
-                        }
-                    }
-                    else
-                    {
-                        System.Console.WriteLine($"[AutoCap][璇婃柇] Hit node NOT found in Skill/{kv.Value.imgName} for skill {kv.Value.skillId}. Structure: skill/{kv.Value.skillId}/hit");
-                        // Check if skill node exists at least
-                        var skillNode = skillImg["skill"]?[kv.Value.skillId];
-                        if (skillNode != null)
-                        {
-                             System.Console.WriteLine($"[AutoCap][璇婃柇] Skill node {kv.Value.skillId} exists, but missing 'hit' child.");
-                        }
-                        else
-                        {
-                             System.Console.WriteLine($"[AutoCap][璇婃柇] Skill node {kv.Value.skillId} NOT found under 'skill' root.");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    System.Console.WriteLine($"[AutoCap][璇婃柇] Error loading skill effect {kv.Value.skillId}: {ex.GetType().Name} - {ex.Message}");
-                }
+                if (container[f.ToString()] is not WzCanvasProperty canvas) break;
+                LoadSingleFrame(canvas, frames);
             }
-            
-            System.Console.WriteLine($"[AutoCap] Loaded {loadedCount} real skill hit variations.");
-            return loadedCount;
-        }
-
-        private void LoadAnimationFrames(WzImageProperty container, List<IDXObject> frames)
-        {
-            if (container == null) return;
-            
-            var properties = container.WzProperties;
-            int count = properties?.Count ?? 0;
-            System.Console.WriteLine($"[AutoCap][璇婃柇] Enumerating {count} frames in: {container.FullPath} (CollectionType: {properties?.GetType().Name ?? "null"})");
-            
-            if (count == 0) return;
-
-            // Use explicit for-loop to bypass potential enumerator issues
-            for (int i = 0; i < count; i++)
-            {
-                var prop = properties[i];
-                if (prop == null)
-                {
-                    System.Console.WriteLine($"[AutoCap][璇婃柇] Frame[{i}] is null!");
-                    continue;
-                }
-                
-                string name = prop.Name;
-                System.Console.WriteLine($"[AutoCap][璇婃柇] Frame[{i}]: '{name}' (Type: {prop.GetType().Name})");
-                
-                if (int.TryParse(name, out _))
-                {
-                    if (prop is WzCanvasProperty canvas)
-                    {
-                        LoadSingleFrame(canvas, frames);
-                    }
-                    else if (prop is WzUOLProperty uol)
-                    {
-                        var target = uol.LinkValue as WzCanvasProperty;
-                        if (target != null) LoadSingleFrame(target, frames);
-                    }
-                    else if (prop is WzSubProperty sub)
-                    {
-                         LoadAnimationFrames(sub, frames);
-                    }
-                }
-                else
-                {
-                    // If it's not a number, but it's the ONLY child, maybe it's the frame itself under a weird name?
-                    // But usually we just ignore it.
-                    System.Console.WriteLine($"[AutoCap][璇婃柇] Ignoring non-numeric child: {name} ({prop.GetType().Name})");
-                }
-            }
-        }
-
-        private void LoadSingleFrame(WzCanvasProperty canvas, List<IDXObject> frames)
-        {
-            var bitmap = canvas.GetLinkedWzCanvasBitmap();
-            if (bitmap == null)
-            {
-                System.Console.WriteLine($"[AutoCap][璇婃柇] Bitmap is null for canvas: {canvas.FullPath}");
-                return;
-            }
-
-            var texture = bitmap.ToTexture2D(GraphicsDevice);
-            if (texture == null)
-            {
-                System.Console.WriteLine($"[AutoCap][璇婃柇] Texture creation failed for canvas: {canvas.FullPath}");
-                return;
-            }
-
-            var origin = canvas["origin"] as WzVectorProperty;
-            int ox = origin?.X?.Value ?? texture.Width / 2;
-            int oy = origin?.Y?.Value ?? texture.Height;
-            int delay = (canvas["delay"] as WzIntProperty)?.Value ?? 100;
-
-            frames.Add(new DXObject(-ox, -oy, texture, delay));
-            System.Console.WriteLine($"[AutoCap][璇婃柇] Added frame from {canvas.FullPath} ({texture.Width}x{texture.Height}, delay={delay})");
         }
 
         /// <summary>
@@ -5992,335 +4227,9 @@ namespace HaCreator.MapSimulator
             // Save screenshot if render is activated
             _screenshotManager.ProcessScreenshot(GraphicsDevice);
 
-            // Dataset Generator Capture
-            if (_datasetGenerator.IsGenerating)
-            {
-                bool isSamplingPhase = _autoCaptureCameraPhase == AutoCaptureCameraPhase.Sampling;
-                bool captureDue = _datasetGenerator.IsCaptureDue();
-                if (isSamplingPhase && captureDue)
-                {
-                    _datasetGenerator.MarkCaptureConsumed();
-                    bool skipCaptureThisFrame = false;
-                    if (IsAutoCaptureEnabled &&
-                        _autoCaptureCameraPhase != AutoCaptureCameraPhase.Sampling)
-                    {
-                        skipCaptureThisFrame = true;
-                    }
-
-                    if (!skipCaptureThisFrame)
-                    {
-                        var bucketTuning = BuildBucketTuning();
-                        int frameNo = _datasetGenerator?.CapturedFrameCount ?? _autoCaptureCaptureSaved;
-                        List<(int classId, Rectangle bounds)> boundsList = new List<(int classId, Rectangle bounds)>();
-                        if (!bucketTuning.SuppressMobLabels && _mobPool != null)
-                        {
-                            foreach (var mob in _mobPool.ActiveMobs)
-                            {
-                                var rect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
-                                if (rect != null)
-                                {
-                                    boundsList.Add((ResolveMobLabelClassId(mob), rect.Value));
-                                }
-                            }
-                        }
-
-                        if (!bucketTuning.SuppressMobLabels && _mobPool != null)
-                        {
-                            // 闅忔満娉ㄥ叆姝讳骸鏍囩浠ュ寮烘牱鏈?diversity (浠呭湪 DeathHeavy 妯″紡涓?
-                        }
-
-                        // Get HP bars bounds removed per refactoring (labels/0.txt no longer contains class 2).
-
-                        // 鏍规嵁閲囬泦绛栫暐璁＄畻褰撳墠甯ф槸鍚﹀寘鍚湁鏁堢洰鏍囷紝鑻ユ棤鐩爣鍒欏皾璇曟敞鍏ユ垨璺宠繃褰撳墠甯ч噰闆?
-                        _autoCaptureCaptureAttempted++;
-                        IncrementBucketCount(_autoCaptureBucketAttempted, _autoCaptureCurrentBucket);
-                        if (IsAutoCaptureEnabled)
-                        {
-                            int frameWidth = _renderParams.RenderWidth > 0 ? _renderParams.RenderWidth : (GraphicsDevice?.PresentationParameters?.BackBufferWidth ?? 0);
-                            int frameHeight = _renderParams.RenderHeight > 0 ? _renderParams.RenderHeight : (GraphicsDevice?.PresentationParameters?.BackBufferHeight ?? 0);
-                            int usableCount = CountUsableCaptureRects(boundsList, frameWidth, frameHeight);
-                            if (usableCount == 0)
-                            {
-                                float scale = Math.Max(1f, _renderParams.RenderObjectScaling);
-                                if (scale > 1.01f)
-                                {
-                                    var fallbackBounds = BuildScaleFallbackBounds(boundsList, scale);
-                                    int fallbackUsable = CountUsableCaptureRects(fallbackBounds, frameWidth, frameHeight);
-                                    if (fallbackUsable > 0)
-                                    {
-                                        boundsList = fallbackBounds;
-                                        usableCount = fallbackUsable;
-                                    }
-                                }
-                            }
-                            _autoCaptureBoundsRawCount += boundsList?.Count ?? 0;
-                            _autoCaptureBoundsUsableCount += usableCount;
-
-                            if (usableCount == 0)
-                            {
-                                _autoCaptureCaptureSkippedEmpty++;
-                            }
-                        }
-
-                        if (!skipCaptureThisFrame)
-                        {
-                            string saveFailReason;
-                            bool saved = _datasetGenerator.TrySaveFrameAndLabels(GraphicsDevice, boundsList, out saveFailReason);
-                            if (!saved)
-                            {
-                                _autoCaptureSaveFailCount++;
-                                IncrementAutoCaptureSaveFailReason(saveFailReason);
-                                throw new InvalidOperationException(
-                                    $"E_AUTOCAP_CAPTURE_WRITE_FAILED: reason={saveFailReason}");
-                            }
-
-                            _autoCaptureCaptureSaved++;
-                            IncrementBucketCount(_autoCaptureBucketSaved, _autoCaptureCurrentBucket);
-                            AppendBucketManifest(
-                                frameNo,
-                                _autoCaptureCurrentBucket,
-                                _autoCaptureCurrentProfile,
-                                true,
-                                boundsList?.Count ?? 0,
-                                CountUsableCaptureRects(
-                                    boundsList,
-                                    _renderParams.RenderWidth > 0 ? _renderParams.RenderWidth : (GraphicsDevice?.PresentationParameters?.BackBufferWidth ?? 0),
-                                    _renderParams.RenderHeight > 0 ? _renderParams.RenderHeight : (GraphicsDevice?.PresentationParameters?.BackBufferHeight ?? 0)),
-                                _autoCaptureLastFrameHasForcedHitState,
-                                _autoCaptureLastFrameDamageEventTriggered);
-                            MarkAutoCaptureSamplingDecision();
-                        }
-
-                        // Camera skipping logic has been removed as requested.
-                        // The camera will no longer automatically advance if point attempts are exceeded.
-                    }
-                }
-            }
 
             base.Draw(gameTime);
         }
-
-        private static bool HasAnyClassId(List<(int classId, Rectangle bounds)> boundsList, int classId)
-        {
-            if (boundsList == null || boundsList.Count == 0)
-            {
-                return false;
-            }
-
-            foreach (var item in boundsList)
-            {
-                if (item.classId == classId)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private static bool IsDeathLikeAction(string action)
-        {
-            if (string.IsNullOrEmpty(action))
-            {
-                return false;
-            }
-
-            string s = action.ToLowerInvariant();
-            return s.StartsWith("die", StringComparison.Ordinal) ||
-                   s.StartsWith("dead", StringComparison.Ordinal) ||
-                   s.StartsWith("death", StringComparison.Ordinal);
-        }
-
-        private void IncrementAutoCaptureSaveFailReason(string reason)
-        {
-            string key = string.IsNullOrWhiteSpace(reason) ? "unknown" : reason;
-            if (_autoCaptureSaveFailByReason.TryGetValue(key, out int count))
-            {
-                _autoCaptureSaveFailByReason[key] = count + 1;
-            }
-            else
-            {
-                _autoCaptureSaveFailByReason[key] = 1;
-            }
-        }
-
-        private string FormatSaveFailReasonStats()
-        {
-            if (_autoCaptureSaveFailByReason.Count == 0)
-            {
-                return "none";
-            }
-
-            var pairs = _autoCaptureSaveFailByReason
-                .OrderByDescending(kv => kv.Value)
-                .Take(4)
-                .Select(kv => $"{kv.Key}:{kv.Value}");
-            return string.Join("|", pairs);
-        }
-
-        private static Rectangle ClampRectToFrame(Rectangle rect, int width, int height)
-        {
-            if (width <= 0 || height <= 0)
-            {
-                return Rectangle.Empty;
-            }
-
-            int left = Math.Max(0, rect.Left);
-            int top = Math.Max(0, rect.Top);
-            int right = Math.Min(width, rect.Right);
-            int bottom = Math.Min(height, rect.Bottom);
-            if (right <= left || bottom <= top)
-            {
-                return Rectangle.Empty;
-            }
-
-            return new Rectangle(left, top, right - left, bottom - top);
-        }
-
-        private static bool IsUsableCaptureRect(Rectangle rect, int width, int height)
-        {
-            Rectangle clipped = ClampRectToFrame(rect, width, height);
-            return clipped.Width >= 2 && clipped.Height >= 2;
-        }
-
-        private static int CountUsableCaptureRects(List<(int classId, Rectangle bounds)> boundsList, int width, int height)
-        {
-            if (boundsList == null || boundsList.Count == 0)
-            {
-                return 0;
-            }
-
-            int count = 0;
-            foreach (var item in boundsList)
-            {
-                if (IsUsableCaptureRect(item.bounds, width, height))
-                {
-                    count++;
-                }
-            }
-
-            return count;
-        }
-
-        private bool TryInjectFallbackMobBox(ref List<(int classId, Rectangle bounds)> boundsList, int width, int height)
-        {
-            if (_mobPool?.ActiveMobs == null || _mobPool.ActiveMobs.Count == 0 || width <= 0 || height <= 0)
-            {
-                return false;
-            }
-
-            int mapCenterX = _mapBoard?.CenterPoint.X ?? _mapCenterX;
-            int mapCenterY = _mapBoard?.CenterPoint.Y ?? _mapCenterY;
-            float scale = Math.Max(1f, _renderParams.RenderObjectScaling);
-            int synthW = Math.Max(18, (int)Math.Round(34f * scale));
-            int synthH = Math.Max(18, (int)Math.Round(30f * scale));
-            int frameCenterX = width / 2;
-            int frameCenterY = height / 2;
-
-            Rectangle best = Rectangle.Empty;
-            double bestDist2 = double.MaxValue;
-            foreach (var mob in _mobPool.ActiveMobs)
-            {
-                if (mob == null)
-                {
-                    continue;
-                }
-
-                // Priority 1: use real animated screen bounds if available.
-                var realRect = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
-                if (realRect != null)
-                {
-                    Rectangle clippedReal = ClampRectToFrame(realRect.Value, width, height);
-                    if (clippedReal.Width > 2 && clippedReal.Height > 2)
-                    {
-                        best = clippedReal;
-                        break;
-                    }
-                }
-
-                // Priority 2: synthesize a conservative bbox from projected world position.
-                int sx = (int)Math.Round((double)mob.CurrentX - mapShiftX + mapCenterX);
-                int sy = (int)Math.Round((double)mob.CurrentY - mapShiftY + mapCenterY);
-                Rectangle synth = new Rectangle(
-                    sx - (synthW / 2),
-                    sy - (int)Math.Round(synthH * 0.85f),
-                    synthW,
-                    synthH);
-                Rectangle clippedSynth = ClampRectToFrame(synth, width, height);
-                if (clippedSynth.Width <= 2 || clippedSynth.Height <= 2)
-                {
-                    continue;
-                }
-
-                int cx = clippedSynth.Left + clippedSynth.Width / 2;
-                int cy = clippedSynth.Top + clippedSynth.Height / 2;
-                double dx = cx - frameCenterX;
-                double dy = cy - frameCenterY;
-                double d2 = dx * dx + dy * dy;
-                if (d2 < bestDist2)
-                {
-                    bestDist2 = d2;
-                    best = clippedSynth;
-                }
-            }
-
-            if (best.Width <= 2 || best.Height <= 2)
-            {
-                return false;
-            }
-            if (boundsList == null)
-            {
-                boundsList = new List<(int classId, Rectangle bounds)>();
-            }
-            boundsList.Add((AutoCapClassMobActive, best));
-            return true;
-        }
-
-        private static List<(int classId, Rectangle bounds)> BuildScaleFallbackBounds(
-            List<(int classId, Rectangle bounds)> boundsList,
-            float scale)
-        {
-            var result = new List<(int classId, Rectangle bounds)>();
-            if (boundsList == null || boundsList.Count == 0 || scale <= 1.01f)
-            {
-                return result;
-            }
-
-            float inv = 1f / scale;
-            for (int i = 0; i < boundsList.Count; i++)
-            {
-                var item = boundsList[i];
-                var r = item.bounds;
-                int left = (int)Math.Round(r.Left * inv);
-                int top = (int)Math.Round(r.Top * inv);
-                int width = Math.Max(1, (int)Math.Round(r.Width * inv));
-                int height = Math.Max(1, (int)Math.Round(r.Height * inv));
-                result.Add((item.classId, new Rectangle(left, top, width, height)));
-            }
-
-            return result;
-        }
-
-        private static bool HasUsableClassId(List<(int classId, Rectangle bounds)> boundsList, int classId, int width, int height)
-        {
-            if (boundsList == null || boundsList.Count == 0)
-            {
-                return false;
-            }
-
-            foreach (var item in boundsList)
-            {
-                if (item.classId == classId && IsUsableCaptureRect(item.bounds, width, height))
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        #endif
-
 
         /// <summary>
         /// Draws the player character
@@ -6340,7 +4249,7 @@ namespace HaCreator.MapSimulator
                 if (!_tombHasLanded && _tombAnimationStartTime == 0)
                 {
                     _tombAnimationStartTime = Environment.TickCount;
-
+                    _tombAnimationComplete = false;
 
                     // Find the actual ground position below the death location
                     float groundY = player.DeathY;
@@ -6386,7 +4295,7 @@ namespace HaCreator.MapSimulator
             {
                 // Reset tombstone state when player is alive (respawned)
                 _tombAnimationStartTime = 0;
-
+                _tombAnimationComplete = false;
                 _tombHasLanded = false;
                 _tombVelocityY = 0;
             }
@@ -6432,7 +4341,7 @@ namespace HaCreator.MapSimulator
                 {
                     _tombCurrentY = _tombTargetY;
                     _tombHasLanded = true;
-
+                    _tombAnimationComplete = true; // Switch to land frame when hitting ground
                 }
             }
 
@@ -6932,8 +4841,3 @@ namespace HaCreator.MapSimulator
         Leaves
     }
 }
-
-
-
-
-
