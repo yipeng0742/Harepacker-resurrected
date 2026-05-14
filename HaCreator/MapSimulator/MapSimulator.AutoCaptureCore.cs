@@ -259,12 +259,6 @@ namespace HaCreator.MapSimulator
                 return false;
             }
 
-            if (levelData.Damage <= 0)
-            {
-                reason = "damage";
-                return false;
-            }
-
             int[] timings = TryResolveNativeSkillSegmentOffsets(skill, levelData.AttackCount);
             if (timings == null || timings.Length != levelData.AttackCount)
             {
@@ -278,7 +272,7 @@ namespace HaCreator.MapSimulator
                 Name = skill.Name,
                 Job = skill.Job,
                 AttackCount = levelData.AttackCount,
-                DamagePercent = levelData.Damage,
+                DamagePercent = Math.Max(1, levelData.Damage),
                 CriticalRatePercent = Math.Max(0, levelData.CriticalRate),
                 VisualFamily = InferAutoCaptureSkillVisualFamily(skill, levelData),
                 OcclusionLevel = InferAutoCaptureSkillOcclusionLevel(skill, levelData),
@@ -286,6 +280,7 @@ namespace HaCreator.MapSimulator
             };
             return true;
         }
+
 
         private string ResolveAutoCaptureSkillCatalogPath()
         {
@@ -742,7 +737,7 @@ namespace HaCreator.MapSimulator
 
                 if (_autoCaptureSkillDuplicateRecords.Count > 0)
                 {
-                    lines.Add("## 607 \u5230 590\uff1a\u91cd\u590d skill \u8282\u70b9");
+                    lines.Add($"## {_autoCaptureSkillScannedCount} \u5230 {_autoCaptureSkillUniqueNodeCount}\uff1a\u91cd\u590d skill \u8282\u70b9");
                     lines.Add("");
                     lines.Add("| Skill ID | \u6280\u80fd\u540d | \u9996\u6b21\u6765\u6e90 Job | \u91cd\u590d\u6765\u6e90 Job |");
                     lines.Add("| ---: | :--- | ---: | :--- |");
@@ -758,13 +753,13 @@ namespace HaCreator.MapSimulator
 
                 if (_autoCaptureSkillRejectRecords.Count == 0)
                 {
-                    lines.Add("## 590 \u5230 52\uff1a\u65e0\u7b5b\u9664\u9879");
+                    lines.Add($"## {parsedAttackCount} \u5230 {_autoCaptureSkillBuiltCount}\uff1a\u65e0\u7b5b\u9664\u9879");
                     lines.Add("");
                     lines.Add("- \u672c\u6b21\u6ca1\u6709\u6280\u80fd\u88ab\u7b5b\u9664\u3002");
                 }
                 else
                 {
-                    lines.Add("## 590 \u5230 52\uff1a\u7b5b\u9664\u539f\u56e0\u5206\u7ec4");
+                    lines.Add($"## {parsedAttackCount} \u5230 {_autoCaptureSkillBuiltCount}\uff1a\u7b5b\u9664\u539f\u56e0\u5206\u7ec4");
                     lines.Add("");
                     lines.Add("| \u539f\u56e0 | \u6570\u91cf |");
                     lines.Add("| :--- | ---: |");
@@ -1220,52 +1215,32 @@ namespace HaCreator.MapSimulator
                 skillName = nameTuple.Item1;
             }
 
-            string[] blacklist = { "被动", "强化", "恢复", "祝福", "护盾", "治疗", "隐身", "复活" };
+            string[] blacklist = { "\u88ab\u52a8", "\u5f3a\u5316", "\u6062\u590d", "\u795d\u798f", "\u62a4\u76fe", "\u6cbb\u7597", "\u9690\u8eab", "\u590d\u6d3b" };
             bool isBlacklisted = blacklist.Any(word => skillName.Contains(word));
             skill.Name = skillName;
             skill.AutoCapHasActionNode = hasAction;
             skill.AutoCapHasBallNode = hasBall;
-            skill.IsAttack = hasAction && (hasHit || hasBall) && !isInvisible && (jobId >= 100 && jobId < 8000) && !isBlacklisted;
+            skill.Invisible = isInvisible;
+            skill.IsAttack = (hasHit || hasBall) && (jobId >= 100 && jobId < 8000) && !isBlacklisted;
             skill.AutoCapRejectHintCode = null;
             skill.AutoCapRejectHintDetail = null;
 
             if (!skill.IsAttack)
             {
-                if (!hasAction)
-                {
-                    skill.AutoCapRejectHintCode = "missing_action";
-                    skill.AutoCapRejectHintDetail = "缺少 action 节点，无法作为攻击动作播放。";
-                }
-                else if (!hasHit && !hasBall)
+                if (!hasHit && !hasBall)
                 {
                     skill.AutoCapRejectHintCode = "missing_hit_or_ball";
-                    skill.AutoCapRejectHintDetail = "同时缺少 hit 和 ball 节点，没有可用攻击表现。";
-                }
-                else if (isInvisible)
-                {
-                    skill.AutoCapRejectHintCode = "invisible";
-                    skill.AutoCapRejectHintDetail = "技能被标记为 invisible，采集时不作为可见攻击技能。";
+                    skill.AutoCapRejectHintDetail = "\u540c\u65f6\u7f3a\u5c11 hit \u548c ball \u8282\u70b9\uff0c\u6ca1\u6709\u53ef\u7528\u653b\u51fb\u8868\u73b0\u3002";
                 }
                 else if (jobId < 100 || jobId >= 8000)
                 {
                     skill.AutoCapRejectHintCode = "job_out_of_range";
-                    skill.AutoCapRejectHintDetail = $"Job={jobId} 不在角色主动攻击技能扫描范围内。";
+                    skill.AutoCapRejectHintDetail = $"Job={jobId} \u4e0d\u5728\u89d2\u8272\u4e3b\u52a8\u653b\u51fb\u6280\u80fd\u626b\u63cf\u8303\u56f4\u5185\u3002";
                 }
                 else if (isBlacklisted)
                 {
                     skill.AutoCapRejectHintCode = "name_blacklist";
-                    skill.AutoCapRejectHintDetail = "技能名命中被动/强化/恢复/祝福/护盾/治疗/隐身/复活黑名单。";
-                }
-            }
-
-            if (skill.IsAttack)
-            {
-                bool actuallyHasDamage = skill.Levels.Values.Any(v => v != null && v.Damage > 0);
-                if (!actuallyHasDamage)
-                {
-                    skill.IsAttack = false;
-                    skill.AutoCapRejectHintCode = "no_positive_damage";
-                    skill.AutoCapRejectHintDetail = "虽然有攻击表现，但所有等级伤害值都小于等于 0。";
+                    skill.AutoCapRejectHintDetail = "\u6280\u80fd\u540d\u547d\u4e2d\u88ab\u52a8/\u5f3a\u5316/\u6062\u590d/\u795d\u798f/\u62a4\u76fe/\u6cbb\u7597/\u9690\u8eab/\u590d\u6d3b\u9ed1\u540d\u5355\u3002";
                 }
             }
 
@@ -1279,6 +1254,8 @@ namespace HaCreator.MapSimulator
 
             return skill;
         }
+
+
 
         private SkillAnimation BuildAutoCapSkillAnimationFromNode(WzImageProperty node, string name)
         {

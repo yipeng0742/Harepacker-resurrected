@@ -582,7 +582,7 @@ namespace HaCreator.MapSimulator.Character.Skills
         {
             foreach (var skill in Skills.Values)
             {
-                if (!skill.IsPassive && !skill.Invisible)
+                if (!skill.IsPassive)
                     yield return skill;
             }
         }
