@@ -79,9 +79,14 @@ namespace HaCreator.MapSimulator.Automation
             public int per_mob_cooldown_ms { get; set; } = 900;
             public int max_events_per_capture_frame { get; set; } = 6;
             public int max_active_numbers { get; set; } = 36;
+            public bool enable_miss { get; set; } = true;
+            public int min_damage { get; set; } = 1;
+            public int max_damage { get; set; } = 199999;
+            public string damage_distribution_mode { get; set; } = "quadratic";
             public string template_style { get; set; } = "realistic";
             public DamageTemplateWeights template_weights { get; set; } = new DamageTemplateWeights();
             public DamageProbByProfile prob_by_profile { get; set; } = new DamageProbByProfile();
+            public MissProbByProfile miss_prob_by_profile { get; set; } = new MissProbByProfile();
         }
 
         private sealed class DamageTemplateWeights
@@ -99,6 +104,14 @@ namespace HaCreator.MapSimulator.Automation
             public double attack { get; set; } = 0.14d;
             public double hit { get; set; } = 0.20d;
             public double death { get; set; } = 0.05d;
+        }
+
+        private sealed class MissProbByProfile
+        {
+            public double normal { get; set; } = 0.08d;
+            public double attack { get; set; } = 0.12d;
+            public double hit { get; set; } = 0.06d;
+            public double death { get; set; } = 0.02d;
         }
 
         private sealed class HitEffectControl
@@ -229,7 +242,7 @@ namespace HaCreator.MapSimulator.Automation
                 AutoCaptureRealSkillEffectControl realSkillEffectControl = BuildRealSkillEffectControl(job.real_skill_effect);
                 Console.WriteLine($"  camera_plan  : mode={cameraPlan.Mode}, overlap={cameraPlan.GridOverlapRatioX:0.###}/{cameraPlan.GridOverlapRatioY:0.###}, start={cameraPlan.StartCorner}, traversal={cameraPlan.Traversal}, warmup_frames={cameraPlan.StartupWarmupFrames}, settle_frames={cameraPlan.SettleFrames}, sample_frames_per_point={cameraPlan.SampleFramesPerPoint}");
                 Console.WriteLine("  labels       : class0=mob_dead, class1=mob_active");
-                Console.WriteLine($"  dmg_num_ctrl : global_cd={damageControl.GlobalCooldownMs}ms, per_mob_cd={damageControl.PerMobCooldownMs}ms, per_frame={damageControl.MaxEventsPerCaptureFrame}, active_nums={damageControl.MaxActiveNumbers}, ratio_cap={damageControl.UseMobRatioCap}, mob_ratio={damageControl.MobRatio:0.###}, frame_cap={damageControl.MinEventsPerCaptureFrame}-{damageControl.MaxEventsPerCaptureFrameCap}");
+                Console.WriteLine($"  dmg_num_ctrl : global_cd={damageControl.GlobalCooldownMs}ms, per_mob_cd={damageControl.PerMobCooldownMs}ms, per_frame={damageControl.MaxEventsPerCaptureFrame}, active_nums={damageControl.MaxActiveNumbers}, ratio_cap={damageControl.UseMobRatioCap}, mob_ratio={damageControl.MobRatio:0.###}, frame_cap={damageControl.MinEventsPerCaptureFrame}-{damageControl.MaxEventsPerCaptureFrameCap}, enable_miss={damageControl.EnableMiss}, damage_range={damageControl.MinDamage}-{damageControl.MaxDamage}, distribution={damageControl.DamageDistributionMode}");
                 Console.WriteLine($"                 probs(normal/attack/hit/death)={damageControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{damageControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
                 Console.WriteLine($"                 template_style={damageControl.TemplateStyle}, template_weights=single:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Single, 0)},double_tap:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.DoubleTap, 0)},rapid_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.RapidCombo, 0)},stagger_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.StaggerCombo, 0)},finisher:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Finisher, 0)}");
                 Console.WriteLine($"  hit_effect_ctrl: enabled={hitEffectControl.Enabled}, palette={hitEffectControl.PaletteMode}, alpha={hitEffectControl.AlphaMin:0.##}-{hitEffectControl.AlphaMax:0.##}, scale={hitEffectControl.ScaleMin:0.##}-{hitEffectControl.ScaleMax:0.##}, lifetime={hitEffectControl.LifetimeMsMin}-{hitEffectControl.LifetimeMsMax}ms, layers={hitEffectControl.ExtraLayersMin}-{hitEffectControl.ExtraLayersMax}, jitter={hitEffectControl.JitterPxX}x{hitEffectControl.JitterPxY}, variations=[{string.Join(",", hitEffectControl.VariationPool)}]");
@@ -661,11 +674,16 @@ namespace HaCreator.MapSimulator.Automation
         {
             control ??= new DamageNumberControl();
             var prob = control.prob_by_profile ?? new DamageProbByProfile();
+            var missProb = control.miss_prob_by_profile ?? new MissProbByProfile();
             var templateWeights = control.template_weights ?? new DamageTemplateWeights();
             AutoCaptureDamageTemplateStyle templateStyle =
                 string.Equals(control.template_style, "robust", StringComparison.OrdinalIgnoreCase)
                     ? AutoCaptureDamageTemplateStyle.Robust
                     : AutoCaptureDamageTemplateStyle.Realistic;
+            AutoCaptureDamageDistributionMode distributionMode =
+                string.Equals(control.damage_distribution_mode, "bucketed", StringComparison.OrdinalIgnoreCase)
+                    ? AutoCaptureDamageDistributionMode.Bucketed
+                    : AutoCaptureDamageDistributionMode.Quadratic;
 
             return new AutoCaptureDamageNumberControl
             {
@@ -677,6 +695,10 @@ namespace HaCreator.MapSimulator.Automation
                 PerMobCooldownMs = Math.Max(0, control.per_mob_cooldown_ms),
                 MaxEventsPerCaptureFrame = Math.Max(0, control.max_events_per_capture_frame),
                 MaxActiveNumbers = Math.Max(1, control.max_active_numbers),
+                EnableMiss = control.enable_miss,
+                MinDamage = Math.Max(1, control.min_damage),
+                MaxDamage = Math.Max(1, control.max_damage),
+                DamageDistributionMode = distributionMode,
                 TemplateStyle = templateStyle,
                 TemplateWeights = new Dictionary<AutoCaptureDamageTemplateKind, int>
                 {
@@ -692,6 +714,13 @@ namespace HaCreator.MapSimulator.Automation
                     [AutoCaptureProfile.AttackHeavy] = Math.Clamp(prob.attack, 0d, 1d),
                     [AutoCaptureProfile.HitOcclusionHeavy] = Math.Clamp(prob.hit, 0d, 1d),
                     [AutoCaptureProfile.DeathHeavy] = Math.Clamp(prob.death, 0d, 1d)
+                },
+                MissProbByProfile = new Dictionary<AutoCaptureProfile, double>
+                {
+                    [AutoCaptureProfile.NormalMove] = Math.Clamp(missProb.normal, 0d, 1d),
+                    [AutoCaptureProfile.AttackHeavy] = Math.Clamp(missProb.attack, 0d, 1d),
+                    [AutoCaptureProfile.HitOcclusionHeavy] = Math.Clamp(missProb.hit, 0d, 1d),
+                    [AutoCaptureProfile.DeathHeavy] = Math.Clamp(missProb.death, 0d, 1d)
                 }
             }.Normalize();
         }

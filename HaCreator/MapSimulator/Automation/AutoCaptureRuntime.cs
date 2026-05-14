@@ -25,6 +25,12 @@ namespace HaCreator.MapSimulator.Automation
         Robust
     }
 
+    internal enum AutoCaptureDamageDistributionMode
+    {
+        Quadratic,
+        Bucketed
+    }
+
     internal enum AutoCaptureDamageTemplateKind
     {
         Single,
@@ -284,11 +290,17 @@ namespace HaCreator.MapSimulator.Automation
         public int PerMobCooldownMs { get; set; } = 900;
         public int MaxEventsPerCaptureFrame { get; set; } = 2;
         public int MaxActiveNumbers { get; set; } = 36;
+        public bool EnableMiss { get; set; } = true;
+        public int MinDamage { get; set; } = 1;
+        public int MaxDamage { get; set; } = 199999;
+        public AutoCaptureDamageDistributionMode DamageDistributionMode { get; set; } = AutoCaptureDamageDistributionMode.Quadratic;
         public AutoCaptureDamageTemplateStyle TemplateStyle { get; set; } = AutoCaptureDamageTemplateStyle.Realistic;
         public Dictionary<AutoCaptureDamageTemplateKind, int> TemplateWeights { get; set; } =
             CreateDefaultTemplateWeights(AutoCaptureDamageTemplateStyle.Realistic);
         public Dictionary<AutoCaptureProfile, double> ProbByProfile { get; set; } =
             CreateDefaultProbabilities();
+        public Dictionary<AutoCaptureProfile, double> MissProbByProfile { get; set; } =
+            CreateDefaultMissProbabilities();
 
         public static AutoCaptureDamageNumberControl CreateDefault()
         {
@@ -303,6 +315,17 @@ namespace HaCreator.MapSimulator.Automation
                 [AutoCaptureProfile.AttackHeavy] = 0.16d,
                 [AutoCaptureProfile.HitOcclusionHeavy] = 0.18d,
                 [AutoCaptureProfile.DeathHeavy] = 0.05d
+            };
+        }
+
+        public static Dictionary<AutoCaptureProfile, double> CreateDefaultMissProbabilities()
+        {
+            return new Dictionary<AutoCaptureProfile, double>
+            {
+                [AutoCaptureProfile.NormalMove] = 0.08d,
+                [AutoCaptureProfile.AttackHeavy] = 0.12d,
+                [AutoCaptureProfile.HitOcclusionHeavy] = 0.06d,
+                [AutoCaptureProfile.DeathHeavy] = 0.02d
             };
         }
 
@@ -342,13 +365,22 @@ namespace HaCreator.MapSimulator.Automation
                 PerMobCooldownMs = Math.Max(0, PerMobCooldownMs),
                 MaxEventsPerCaptureFrame = Math.Max(0, MaxEventsPerCaptureFrame),
                 MaxActiveNumbers = Math.Max(1, MaxActiveNumbers),
+                EnableMiss = EnableMiss,
+                MinDamage = Math.Max(1, MinDamage),
+                MaxDamage = Math.Max(1, MaxDamage),
+                DamageDistributionMode = DamageDistributionMode,
                 TemplateStyle = TemplateStyle,
                 TemplateWeights = new Dictionary<AutoCaptureDamageTemplateKind, int>(),
-                ProbByProfile = new Dictionary<AutoCaptureProfile, double>()
+                ProbByProfile = new Dictionary<AutoCaptureProfile, double>(),
+                MissProbByProfile = new Dictionary<AutoCaptureProfile, double>()
             };
             if (normalized.MinEventsPerCaptureFrame > normalized.MaxEventsPerCaptureFrameCap)
             {
                 normalized.MinEventsPerCaptureFrame = normalized.MaxEventsPerCaptureFrameCap;
+            }
+            if (normalized.MinDamage > normalized.MaxDamage)
+            {
+                (normalized.MinDamage, normalized.MaxDamage) = (normalized.MaxDamage, normalized.MinDamage);
             }
 
             var sourceTemplateWeights = TemplateWeights ?? CreateDefaultTemplateWeights(normalized.TemplateStyle);
@@ -370,6 +402,15 @@ namespace HaCreator.MapSimulator.Automation
                     : CreateDefaultProbabilities()[profile];
                 normalized.ProbByProfile[profile] = Math.Clamp(value, 0d, 1d);
             }
+
+            var sourceMiss = MissProbByProfile ?? CreateDefaultMissProbabilities();
+            foreach (AutoCaptureProfile profile in Enum.GetValues(typeof(AutoCaptureProfile)))
+            {
+                double value = sourceMiss.TryGetValue(profile, out double p)
+                    ? p
+                    : CreateDefaultMissProbabilities()[profile];
+                normalized.MissProbByProfile[profile] = Math.Clamp(value, 0d, 1d);
+            }
             return normalized;
         }
 
@@ -379,6 +420,16 @@ namespace HaCreator.MapSimulator.Automation
             if (!source.TryGetValue(profile, out double value))
             {
                 value = CreateDefaultProbabilities()[profile];
+            }
+            return Math.Clamp(value, 0d, 1d);
+        }
+
+        public double GetMissProbability(AutoCaptureProfile profile)
+        {
+            var source = MissProbByProfile ?? CreateDefaultMissProbabilities();
+            if (!source.TryGetValue(profile, out double value))
+            {
+                value = CreateDefaultMissProbabilities()[profile];
             }
             return Math.Clamp(value, 0d, 1d);
         }

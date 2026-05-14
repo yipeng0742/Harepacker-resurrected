@@ -1,6 +1,7 @@
 using HaCreator.MapSimulator.Automation;
 using HaCreator.MapSimulator.Entities;
 using HaCreator.MapSimulator.Effects;
+using HaCreator.MapSimulator.Loaders;
 using Microsoft.Xna.Framework;
 using System;
 using System.Collections.Generic;
@@ -266,6 +267,7 @@ namespace HaCreator.MapSimulator
                 int xOffset = _autoCaptureRandom?.Next(-6, 7) ?? 0;
                 int yOffset = _autoCaptureRandom?.Next(-8, 9) ?? 0;
                 int emittedForMob = 0;
+                bool emitMiss = ShouldEmitAutoCaptureMiss();
 
                 for (int burst = 0; burst < segmentCount; burst++)
                 {
@@ -298,10 +300,17 @@ namespace HaCreator.MapSimulator
                         }
                     }
 
-                    int damage = RollAutoCapSegmentDamage(baseDamage, _autoCapturePointDamageTemplate, burst);
-                    bool isCritical = RollAutoCapSegmentCritical(_autoCapturePointDamageTemplate, burst);
                     int comboIndex = burst % 6;
-                    combat.AddPlayerDamage(damage, mob.CurrentX + xOffset, mob.CurrentY - 24f + yOffset, isCritical, eventTick + segmentOffset, comboIndex);
+                    if (emitMiss)
+                    {
+                        combat.AddMiss(mob.CurrentX + xOffset, mob.CurrentY - 24f + yOffset, eventTick + segmentOffset, DamageColorType.Red);
+                    }
+                    else
+                    {
+                        int damage = RollAutoCapSegmentDamage(baseDamage, _autoCapturePointDamageTemplate, burst);
+                        bool isCritical = RollAutoCapSegmentCritical(_autoCapturePointDamageTemplate, burst);
+                        combat.AddPlayerDamage(damage, mob.CurrentX + xOffset, mob.CurrentY - 24f + yOffset, isCritical, eventTick + segmentOffset, comboIndex);
+                    }
 
                     _autoCaptureDmgLastGlobalTick = eventTick;
                     _autoCaptureDmgLastTickByMob[mob.PoolId] = eventTick;
@@ -590,20 +599,7 @@ namespace HaCreator.MapSimulator
 
         private int RollAutoCapBaseDamageByTemplate(AutoCapDamageTemplate template)
         {
-            if (_autoCaptureRandom == null)
-            {
-                return 5000;
-            }
-
-            return template switch
-            {
-                AutoCapDamageTemplate.Single => _autoCaptureRandom.Next(8000, 140000),
-                AutoCapDamageTemplate.DoubleTap => _autoCaptureRandom.Next(9000, 160000),
-                AutoCapDamageTemplate.RapidCombo => _autoCaptureRandom.Next(12000, 220000),
-                AutoCapDamageTemplate.StaggerCombo => _autoCaptureRandom.Next(15000, 240000),
-                AutoCapDamageTemplate.Finisher => _autoCaptureRandom.Next(18000, 280000),
-                _ => _autoCaptureRandom.Next(8000, 140000)
-            };
+            return RollAutoCapBaseDamage();
         }
 
         private int RollAutoCapSegmentDamage(int baseDamage, AutoCapDamageTemplate template, int segmentIndex)
@@ -617,15 +613,17 @@ namespace HaCreator.MapSimulator
             double factor = template switch
             {
                 AutoCapDamageTemplate.Single => 1.00d,
-                AutoCapDamageTemplate.DoubleTap => segmentIndex == 0 ? 1.00d : 0.90d,
-                AutoCapDamageTemplate.RapidCombo => Math.Max(0.62d, 1.02d - (segmentIndex * 0.08d)),
-                AutoCapDamageTemplate.StaggerCombo => 0.78d + (segmentIndex * 0.14d),
-                AutoCapDamageTemplate.Finisher => segmentIndex == 0 ? 0.62d : 0.85d + (segmentIndex * 0.22d),
+                AutoCapDamageTemplate.DoubleTap => segmentIndex == 0 ? 1.00d : 0.80d,
+                AutoCapDamageTemplate.RapidCombo => Math.Max(0.25d, 0.92d - (segmentIndex * 0.14d)),
+                AutoCapDamageTemplate.StaggerCombo => Math.Min(1.20d, 0.60d + (segmentIndex * 0.18d)),
+                AutoCapDamageTemplate.Finisher => segmentIndex == 0 ? 0.55d : Math.Min(1.35d, 0.90d + (segmentIndex * 0.15d)),
                 _ => 1.00d
             };
 
             int value = (int)Math.Round(baseDamage * factor * jitter);
-            return Math.Clamp(value, 1200, 999999);
+            int minDamage = Math.Max(1, _autoCaptureDamageNumberControl?.MinDamage ?? 1);
+            int maxDamage = Math.Max(minDamage, _autoCaptureDamageNumberControl?.MaxDamage ?? 199999);
+            return Math.Clamp(value, minDamage, maxDamage);
         }
 
         private bool RollAutoCapSegmentCritical(AutoCapDamageTemplate template, int segmentIndex)
@@ -645,6 +643,67 @@ namespace HaCreator.MapSimulator
                 _ => 0.22d
             };
             return _autoCaptureRandom.NextDouble() < Math.Clamp(chance, 0.05d, 0.65d);
+        }
+
+        private bool ShouldEmitAutoCaptureMiss()
+        {
+            if (_autoCaptureRandom == null || _autoCaptureDamageNumberControl == null || !_autoCaptureDamageNumberControl.EnableMiss)
+            {
+                return false;
+            }
+
+            double missProb = _autoCaptureDamageNumberControl.GetMissProbability(_autoCaptureCurrentProfile);
+            return _autoCaptureRandom.NextDouble() < Math.Clamp(missProb, 0d, 1d);
+        }
+
+        private int RollAutoCapBaseDamage()
+        {
+            int minDamage = Math.Max(1, _autoCaptureDamageNumberControl?.MinDamage ?? 1);
+            int maxDamage = Math.Max(minDamage, _autoCaptureDamageNumberControl?.MaxDamage ?? 199999);
+            if (_autoCaptureRandom == null)
+            {
+                return minDamage;
+            }
+
+            if ((_autoCaptureDamageNumberControl?.DamageDistributionMode ?? AutoCaptureDamageDistributionMode.Quadratic) == AutoCaptureDamageDistributionMode.Bucketed)
+            {
+                return RollAutoCapBaseDamageBucketed(minDamage, maxDamage);
+            }
+
+            double u = _autoCaptureRandom.NextDouble();
+            double scaled = u * u;
+            int span = Math.Max(0, maxDamage - minDamage);
+            return minDamage + (int)Math.Round(span * scaled);
+        }
+
+        private int RollAutoCapBaseDamageBucketed(int minDamage, int maxDamage)
+        {
+            int roll = _autoCaptureRandom?.Next(100) ?? 0;
+            return roll switch
+            {
+                < 20 => RollAutoCapBaseDamageInBucket(minDamage, maxDamage, 1, 999),
+                < 55 => RollAutoCapBaseDamageInBucket(minDamage, maxDamage, 1000, 9999),
+                < 85 => RollAutoCapBaseDamageInBucket(minDamage, maxDamage, 10000, 49999),
+                < 97 => RollAutoCapBaseDamageInBucket(minDamage, maxDamage, 50000, 119999),
+                _ => RollAutoCapBaseDamageInBucket(minDamage, maxDamage, 120000, 199999)
+            };
+        }
+
+        private int RollAutoCapBaseDamageInBucket(int globalMin, int globalMax, int bucketMin, int bucketMax)
+        {
+            int effectiveMin = Math.Max(globalMin, bucketMin);
+            int effectiveMax = Math.Min(globalMax, bucketMax);
+            if (effectiveMax < effectiveMin)
+            {
+                return globalMin;
+            }
+
+            if (effectiveMax == effectiveMin || _autoCaptureRandom == null)
+            {
+                return effectiveMin;
+            }
+
+            return _autoCaptureRandom.Next(effectiveMin, effectiveMax + 1);
         }
 
         private List<MobItem> BuildDamageEventCandidates(List<MobItem> forceStateMobs, List<MobItem> fallbackMobs)

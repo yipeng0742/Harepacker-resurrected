@@ -354,6 +354,12 @@ namespace HaCreator.MapSimulator
                 () => Width,
                 () => Height);
             _renderingManager.Initialize(_effectManager, _gameState, _dynamicFootholds, _transportField, _limitedViewField);
+
+            if (IsAutoCaptureEnabled)
+            {
+                _DxDeviceManager.PreparingDeviceSettings += graphics_PreparingDeviceSettings;
+                ForceAutoCaptureCompatibleGraphicsSettings();
+            }
         }
 
         #region Loading and unloading
@@ -975,6 +981,8 @@ namespace HaCreator.MapSimulator
                 obj.MSTagSpine = null; // cleanup
             }
             usedProps.Clear();
+
+            InitializeAutoCaptureIfNeeded();
 
         }
 
@@ -1943,6 +1951,11 @@ namespace HaCreator.MapSimulator
                 }
             }
 
+            if (IsAutoCaptureEnabled && newKeyboardState.IsKeyUp(Keys.F4) && _oldKeyboardState.IsKeyDown(Keys.F4))
+            {
+                _datasetGenerator.ToggleGeneration();
+            }
+
 
             // Handle mouse
             mouseCursor.UpdateCursorState();
@@ -2576,6 +2589,12 @@ namespace HaCreator.MapSimulator
 
             // Update NPC movement and action cycling
             UpdateNpcActions(gameTime);
+
+            if (IsAutoCaptureEnabled)
+            {
+                TickAutoCaptureCamera();
+                ApplyAutoCaptureAugmentation(currTickCount);
+            }
 
             // Pre-calculate visibility for all objects (culling optimization)
             _frameNumber++;
@@ -4226,6 +4245,10 @@ namespace HaCreator.MapSimulator
 
             // Save screenshot if render is activated
             _screenshotManager.ProcessScreenshot(GraphicsDevice);
+            if (IsAutoCaptureEnabled)
+            {
+                CaptureAutoCaptureFrame();
+            }
 
 
             base.Draw(gameTime);
@@ -4424,6 +4447,67 @@ namespace HaCreator.MapSimulator
             _spriteBatch.Draw(_debugBoundaryTexture,
                 new Rectangle(crossX - 4, crossY + 4, crossWidth + 8, crossWidth),
                 Color.Black);
+        }
+
+        private void CaptureAutoCaptureFrame()
+        {
+            if (!_datasetGenerator.IsGenerating || _autoCaptureCameraPhase != AutoCaptureCameraPhase.Sampling)
+            {
+                return;
+            }
+
+            if (!_datasetGenerator.ShouldCaptureFrame())
+            {
+                return;
+            }
+
+            int width = GraphicsDevice?.PresentationParameters?.BackBufferWidth ?? 0;
+            int height = GraphicsDevice?.PresentationParameters?.BackBufferHeight ?? 0;
+            if (width <= 0 || height <= 0)
+            {
+                return;
+            }
+
+            var boundsList = new List<(int classId, Rectangle bounds)>();
+            if (_mobPool?.ActiveMobs != null)
+            {
+                int mapCenterX = _mapBoard?.CenterPoint.X ?? _mapCenterX;
+                int mapCenterY = _mapBoard?.CenterPoint.Y ?? _mapCenterY;
+                foreach (var mob in _mobPool.ActiveMobs)
+                {
+                    if (mob == null)
+                    {
+                        continue;
+                    }
+
+                    Rectangle? bounds = mob.GetScreenBounds(mapShiftX, mapShiftY, mapCenterX, mapCenterY, _renderParams.RenderObjectScaling);
+                    if (bounds.HasValue)
+                    {
+                        boundsList.Add((ResolveMobLabelClassId(mob), bounds.Value));
+                    }
+                }
+            }
+
+            _autoCaptureCaptureAttempted++;
+            IncrementBucketCount(_autoCaptureBucketAttempted, _autoCaptureCurrentBucket);
+            _autoCaptureBoundsRawCount += boundsList.Count;
+            _autoCaptureBoundsUsableCount += CountUsableCaptureRects(boundsList, width, height);
+
+            TryInjectFallbackMobBox(ref boundsList, width, height);
+
+            if (_datasetGenerator.TrySaveFrameAndLabels(GraphicsDevice, boundsList, out string failReason))
+            {
+                _autoCaptureCaptureSaved++;
+                IncrementBucketCount(_autoCaptureBucketSaved, _autoCaptureCurrentBucket);
+                AppendBucketManifest(_datasetGenerator.CapturedFrameCount, _autoCaptureCurrentBucket, _autoCaptureCurrentProfile, true, boundsList.Count, CountUsableCaptureRects(boundsList, width, height), _autoCaptureLastFrameHasForcedHitState, _autoCaptureLastFrameDamageEventTriggered);
+                MarkAutoCaptureSamplingDecision();
+            }
+            else
+            {
+                _autoCaptureSaveFailCount++;
+                IncrementAutoCaptureSaveFailReason(failReason);
+                AppendBucketManifest(_datasetGenerator.CapturedFrameCount, _autoCaptureCurrentBucket, _autoCaptureCurrentProfile, false, boundsList.Count, CountUsableCaptureRects(boundsList, width, height), _autoCaptureLastFrameHasForcedHitState, _autoCaptureLastFrameDamageEventTriggered);
+            }
         }
 
         // NOTE: DrawDrops, DrawNpcs, DrawDebugOverlays moved to RenderingManager
