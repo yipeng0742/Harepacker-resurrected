@@ -267,12 +267,12 @@ namespace HaCreator.MapSimulator
                 int xOffset = _autoCaptureRandom?.Next(-6, 7) ?? 0;
                 int yOffset = _autoCaptureRandom?.Next(-8, 9) ?? 0;
                 int emittedForMob = 0;
-                bool emitMiss = ShouldEmitAutoCaptureMiss();
                 AutoCapNativeDamageSkillEntry selectedSkill = PickAutoCapturePointSkill();
 
                 for (int burst = 0; burst < segmentCount; burst++)
                 {
                     int segmentOffset = ResolveSegmentTickOffsetMs(_autoCapturePointDamageTemplate, burst);
+                    bool emitMiss = ShouldEmitAutoCaptureMiss();
                     if (combat == null) break;
                     if (!IsMobInCameraView(mob))
                     {
