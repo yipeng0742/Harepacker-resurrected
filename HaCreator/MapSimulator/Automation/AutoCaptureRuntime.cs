@@ -286,7 +286,7 @@ namespace HaCreator.MapSimulator.Automation
         public bool EnableMiss { get; set; } = true;
         public int MinDamage { get; set; } = 1;
         public int MaxDamage { get; set; } = 199999;
-        public AutoCaptureDamageDistributionMode DamageDistributionMode { get; set; } = AutoCaptureDamageDistributionMode.Quadratic;
+        public AutoCaptureDamageDistributionMode DamageDistributionMode { get; set; } = AutoCaptureDamageDistributionMode.Bucketed;
         public AutoCaptureDamageTemplateStyle TemplateStyle { get; set; } = AutoCaptureDamageTemplateStyle.Realistic;
         public Dictionary<AutoCaptureDamageTemplateKind, int> TemplateWeights { get; set; } =
             CreateDefaultTemplateWeights(AutoCaptureDamageTemplateStyle.Realistic);

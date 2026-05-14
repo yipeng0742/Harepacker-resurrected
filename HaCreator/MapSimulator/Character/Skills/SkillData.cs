@@ -303,6 +303,7 @@ namespace HaCreator.MapSimulator.Character.Skills
         public string AutoCapRejectHintCode { get; set; }
         public string AutoCapRejectHintDetail { get; set; }
         public bool AutoCapHasActionNode { get; set; }
+        public bool AutoCapHasHitNode { get; set; }
         public bool AutoCapHasBallNode { get; set; }
 
         /// <summary>

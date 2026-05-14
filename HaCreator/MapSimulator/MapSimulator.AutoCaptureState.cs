@@ -100,6 +100,12 @@ namespace HaCreator.MapSimulator
             public string OcclusionLevel { get; set; }
             public int[] SegmentOffsetsMs { get; set; } = Array.Empty<int>();
             public SkillAnimation CachedHitEffect { get; set; }
+            public bool HasHitNode { get; set; }
+            public bool HasBallNode { get; set; }
+            public bool HasActionNode { get; set; }
+            public bool IsInvisible { get; set; }
+            public string PoolGroup { get; set; }
+            public string PoolReason { get; set; }
         }
 
         private sealed class AutoCaptureSkillCatalogDocument
@@ -128,8 +134,11 @@ namespace HaCreator.MapSimulator
             public string ReasonCode { get; set; }
             public string ReasonDetail { get; set; }
             public bool HasHitEffect { get; set; }
+            public bool HasHitNode { get; set; }
             public bool HasActionNode { get; set; }
             public bool HasBallNode { get; set; }
+            public bool IsInvisible { get; set; }
+            public string PoolGroup { get; set; }
         }
 
         private sealed class AutoCaptureSkillDuplicateRecord

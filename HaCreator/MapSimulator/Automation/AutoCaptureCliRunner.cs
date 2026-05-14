@@ -89,7 +89,7 @@ namespace HaCreator.MapSimulator.Automation
             public bool enable_miss { get; set; } = true;
             public int min_damage { get; set; } = 1;
             public int max_damage { get; set; } = 199999;
-            public string damage_distribution_mode { get; set; } = "quadratic";
+            public string damage_distribution_mode { get; set; } = "bucketed";
             public string template_style { get; set; } = "realistic";
             public DamageTemplateWeights template_weights { get; set; } = new DamageTemplateWeights();
             public DamageProbByProfile prob_by_profile { get; set; } = new DamageProbByProfile();

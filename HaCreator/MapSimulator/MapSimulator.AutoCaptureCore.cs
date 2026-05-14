@@ -173,6 +173,8 @@ namespace HaCreator.MapSimulator
             int rejectedAttackCount = 0;
             int rejectedDamage = 0;
             int rejectedTimings = 0;
+            int rejectedBallOnly = 0;
+            int rejectedUtility = 0;
 
             foreach (var skill in allSkills)
             {
@@ -196,6 +198,12 @@ namespace HaCreator.MapSimulator
                         case "timings":
                             rejectedTimings++;
                             break;
+                        case "ball_only_disabled":
+                            rejectedBallOnly++;
+                            break;
+                        case "utility_skill":
+                            rejectedUtility++;
+                            break;
                     }
                     continue;
                 }
@@ -215,7 +223,7 @@ namespace HaCreator.MapSimulator
             ExportAutoCaptureRejectedSkillList();
             ExportAutoCaptureRejectedSkillMarkdown();
             ExportOrUpdateAutoCaptureSkillCatalog(catalogPath);
-            System.Console.WriteLine($"[AutoCap][native_dmg_pool] source={skillSource} scanned={scannedSkillNodes} built={builtCount} with_hit_effect={withEffectCount} total_skills={allSkills.Count} timing_source=flexible catalog_path={catalogPath} reject_not_attack={rejectedAttack} reject_no_levels={rejectedNoLevels} reject_attack_count={rejectedAttackCount} reject_damage={rejectedDamage} reject_timings={rejectedTimings}");
+            System.Console.WriteLine($"[AutoCap][native_dmg_pool] source={skillSource} scanned={scannedSkillNodes} built={builtCount} with_hit_effect={withEffectCount} total_skills={allSkills.Count} timing_source=native catalog_path={catalogPath} reject_not_attack={rejectedAttack} reject_ball_only={rejectedBallOnly} reject_utility={rejectedUtility} reject_no_levels={rejectedNoLevels} reject_attack_count={rejectedAttackCount} reject_damage={rejectedDamage} reject_timings={rejectedTimings}");
 
             if (builtCount <= 0)
             {
@@ -234,7 +242,19 @@ namespace HaCreator.MapSimulator
 
             if (skill == null || !skill.IsAttack)
             {
-                reason = "not_attack";
+                reason = skill?.AutoCapRejectHintCode ?? "not_attack";
+                return false;
+            }
+
+            if (IsAutoCaptureBallOnlySkill(skill))
+            {
+                reason = "ball_only_disabled";
+                return false;
+            }
+
+            if (IsAutoCaptureUtilityLikeSkill(skill))
+            {
+                reason = "utility_skill";
                 return false;
             }
 
@@ -276,9 +296,36 @@ namespace HaCreator.MapSimulator
                 CriticalRatePercent = Math.Max(0, levelData.CriticalRate),
                 VisualFamily = InferAutoCaptureSkillVisualFamily(skill, levelData),
                 OcclusionLevel = InferAutoCaptureSkillOcclusionLevel(skill, levelData),
-                SegmentOffsetsMs = timings
+                SegmentOffsetsMs = timings,
+                HasHitNode = skill.AutoCapHasHitNode,
+                HasBallNode = skill.AutoCapHasBallNode,
+                HasActionNode = skill.AutoCapHasActionNode,
+                IsInvisible = skill.Invisible,
+                PoolGroup = skill.Invisible ? "default_invisible" : "default",
+                PoolReason = skill.Invisible ? "invisible，但有目标侧 hit 表现，保留采集" : "有目标侧 hit 表现，进入默认采集池"
             };
             return true;
+        }
+
+        private static bool IsAutoCaptureBallOnlySkill(SkillData skill)
+        {
+            return skill != null && !skill.AutoCapHasHitNode && skill.AutoCapHasBallNode;
+        }
+
+        private static bool IsAutoCaptureUtilityLikeSkill(SkillData skill)
+        {
+            if (skill == null)
+            {
+                return false;
+            }
+
+            string name = skill.Name ?? string.Empty;
+            string[] blockedWords =
+            {
+                "治愈", "召唤", "鹰", "龙召唤", "分身", "挑衅", "导航", "辅助",
+                "超能量", "能量获得", "无形箭"
+            };
+            return blockedWords.Any(word => name.Contains(word, StringComparison.OrdinalIgnoreCase));
         }
 
 
@@ -321,6 +368,9 @@ namespace HaCreator.MapSimulator
                 int rejectedNotAttack = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "not_attack", StringComparison.Ordinal));
                 int parsedAttackCount = parsedSkillCount - rejectedNotAttack;
                 int acceptedWithoutHit = Math.Max(0, _autoCaptureSkillBuiltCount - _autoCaptureSkillWithEffectCount);
+                int ballOnlyCount = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "ball_only_disabled", StringComparison.Ordinal));
+                int utilityExcludedCount = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "utility_skill", StringComparison.Ordinal));
+                int invisibleAcceptedCount = _autoCaptureNativeDamageSkillPool.Count(s => s.IsInvisible);
 
                 var lines = new List<string>
                 {
@@ -336,29 +386,71 @@ namespace HaCreator.MapSimulator
                     $"- \u6700\u7ec8\u5165\u6c60\u6280\u80fd\u6570\uff1a{_autoCaptureSkillBuiltCount}",
                     $"- \u5176\u4e2d\u5e26 hit \u7279\u6548\u6280\u80fd\u6570\uff1a{_autoCaptureSkillWithEffectCount}",
                     $"- \u65e0 hit \u7279\u6548\u4f46\u4ecd\u53ef\u7528\u6280\u80fd\u6570\uff1a{acceptedWithoutHit}",
+                    $"- 仅 ball 暂不默认采集：{ballOnlyCount}",
+                    $"- 辅助/召唤/治疗/控制类排除：{utilityExcludedCount}",
+                    $"- invisible 但保留：{invisibleAcceptedCount}",
                     "",
-                    "## \u5165\u6c60\u6280\u80fd\u6e05\u5355",
+                    "## 默认采集技能",
                     "",
-                    "| Skill ID | \u6280\u80fd\u540d | Job | \u6bb5\u6570 | \u4f24\u5bb3 | \u66b4\u51fb\u7387 | \u547d\u4e2d\u7279\u6548 | \u89c6\u89c9\u65cf | \u906e\u6321\u7ea7\u522b |",
-                    "| ---: | :--- | ---: | ---: | ---: | ---: | :---: | :--- | :--- |"
+                    "| Skill ID | \u6280\u80fd\u540d | Job | \u6bb5\u6570 | \u4f24\u5bb3 | \u66b4\u51fb\u7387 | hit | ball | action | invisible | \u89c6\u89c9\u65cf | \u906e\u6321\u7ea7\u522b |",
+                    "| ---: | :--- | ---: | ---: | ---: | ---: | :---: | :---: | :---: | :---: | :--- | :--- |"
                 };
 
                 foreach (var entry in _autoCaptureNativeDamageSkillPool.OrderBy(s => s.SkillId))
                 {
                     string skillName = GetAutoCaptureSkillDisplayName(entry.SkillId, entry.Name);
-                    lines.Add($"| {entry.SkillId} | {skillName} | {entry.Job} | {entry.AttackCount} | {entry.DamagePercent} | {entry.CriticalRatePercent} | {(entry.CachedHitEffect != null ? "\u6709" : "\u65e0")} | {entry.VisualFamily} | {entry.OcclusionLevel} |");
+                    lines.Add($"| {entry.SkillId} | {skillName} | {entry.Job} | {entry.AttackCount} | {entry.DamagePercent} | {entry.CriticalRatePercent} | {BoolZh(entry.HasHitNode)} | {BoolZh(entry.HasBallNode)} | {BoolZh(entry.HasActionNode)} | {BoolZh(entry.IsInvisible)} | {entry.VisualFamily} | {entry.OcclusionLevel} |");
                 }
 
-                var noHitSkills = _autoCaptureNativeDamageSkillPool.Where(s => s.CachedHitEffect == null).OrderBy(s => s.SkillId).ToList();
-                if (noHitSkills.Count > 0)
+                var ballOnlySkills = _autoCaptureSkillRejectRecords
+                    .Where(r => string.Equals(r.ReasonCode, "ball_only_disabled", StringComparison.Ordinal))
+                    .OrderBy(r => r.SkillId)
+                    .ToList();
+                if (ballOnlySkills.Count > 0)
                 {
                     lines.Add("");
-                    lines.Add("## \u65e0 hit \u7279\u6548\u4f46\u4ecd\u4fdd\u7559");
+                    lines.Add("## 仅 ball，暂不默认采集");
                     lines.Add("");
-                    foreach (var entry in noHitSkills)
+                    lines.Add("| Skill ID | 技能名 | Job | ball | 原因 |");
+                    lines.Add("| ---: | :--- | ---: | :---: | :--- |");
+                    foreach (var record in ballOnlySkills)
+                    {
+                        string skillName = GetAutoCaptureSkillDisplayName(record.SkillId, record.Name);
+                        lines.Add($"| {record.SkillId} | {skillName} | {record.Job} | {BoolZh(record.HasBallNode)} | {BuildAutoCaptureSkillRejectDetail(record)} |");
+                    }
+                }
+
+                var utilitySkills = _autoCaptureSkillRejectRecords
+                    .Where(r => string.Equals(r.ReasonCode, "utility_skill", StringComparison.Ordinal))
+                    .OrderBy(r => r.SkillId)
+                    .ToList();
+                if (utilitySkills.Count > 0)
+                {
+                    lines.Add("");
+                    lines.Add("## 辅助/召唤/治疗/控制，已排除");
+                    lines.Add("");
+                    lines.Add("| Skill ID | 技能名 | Job | hit | ball | 原因 |");
+                    lines.Add("| ---: | :--- | ---: | :---: | :---: | :--- |");
+                    foreach (var record in utilitySkills)
+                    {
+                        string skillName = GetAutoCaptureSkillDisplayName(record.SkillId, record.Name);
+                        lines.Add($"| {record.SkillId} | {skillName} | {record.Job} | {BoolZh(record.HasHitNode)} | {BoolZh(record.HasBallNode)} | {BuildAutoCaptureSkillRejectDetail(record)} |");
+                    }
+                }
+
+                var invisibleSkills = _autoCaptureNativeDamageSkillPool
+                    .Where(s => s.IsInvisible)
+                    .OrderBy(s => s.SkillId)
+                    .ToList();
+                if (invisibleSkills.Count > 0)
+                {
+                    lines.Add("");
+                    lines.Add("## invisible 但保留");
+                    lines.Add("");
+                    foreach (var entry in invisibleSkills)
                     {
                         string skillName = GetAutoCaptureSkillDisplayName(entry.SkillId, entry.Name);
-                        lines.Add($"- {entry.SkillId} {skillName} | job={entry.Job} | \u4ecd\u4fdd\u7559\u539f\u56e0\uff1a\u653b\u51fb\u6bb5\u6570\u3001\u4f24\u5bb3\u503c\u3001\u6bb5\u65f6\u5e8f\u5747\u6709\u6548\uff0c\u4ec5\u7f3a\u5c11 hit \u7279\u6548\u8d44\u6e90\u3002");
+                        lines.Add($"- {entry.SkillId} {skillName} | job={entry.Job} | {entry.PoolReason}");
                     }
                 }
 
@@ -428,9 +520,37 @@ namespace HaCreator.MapSimulator
                 ReasonCode = reason,
                 ReasonDetail = BuildAutoCaptureSkillRejectRecordDetail(skill, reason, levelData),
                 HasHitEffect = skill.HitEffect != null,
+                HasHitNode = skill.AutoCapHasHitNode,
                 HasActionNode = skill.AutoCapHasActionNode,
-                HasBallNode = skill.AutoCapHasBallNode
+                HasBallNode = skill.AutoCapHasBallNode,
+                IsInvisible = skill.Invisible,
+                PoolGroup = ResolveAutoCaptureRejectedPoolGroup(skill, reason)
             });
+        }
+
+        private static string ResolveAutoCaptureRejectedPoolGroup(SkillData skill, string reason)
+        {
+            if (string.Equals(reason, "ball_only_disabled", StringComparison.Ordinal))
+            {
+                return "ball_only_disabled";
+            }
+            if (string.Equals(reason, "utility_skill", StringComparison.Ordinal))
+            {
+                return "utility_excluded";
+            }
+            if (string.Equals(reason, "missing_hit_or_ball", StringComparison.Ordinal))
+            {
+                return "missing_visual";
+            }
+            if (string.Equals(reason, "job_out_of_range", StringComparison.Ordinal))
+            {
+                return "job_out_of_range";
+            }
+            if (string.Equals(reason, "name_blacklist", StringComparison.Ordinal))
+            {
+                return "name_blacklist";
+            }
+            return string.IsNullOrWhiteSpace(reason) ? "unknown" : reason;
         }
 
         private void ExportOrUpdateAutoCaptureSkillCatalog(string catalogPath)
@@ -712,6 +832,9 @@ namespace HaCreator.MapSimulator
                 int rejectedAttackCount = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "attack_count", StringComparison.Ordinal));
                 int rejectedDamage = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "damage", StringComparison.Ordinal));
                 int rejectedTimings = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "timings", StringComparison.Ordinal));
+                int rejectedBallOnly = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "ball_only_disabled", StringComparison.Ordinal));
+                int rejectedUtility = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "utility_skill", StringComparison.Ordinal));
+                int acceptedInvisible = _autoCaptureNativeDamageSkillPool.Count(s => s.IsInvisible);
                 int parsedAttackCount = parsedSkillCount - rejectedNotAttack;
 
                 var lines = new List<string>
@@ -729,9 +852,12 @@ namespace HaCreator.MapSimulator
                     $"- \u56e0\u653b\u51fb\u6bb5\u6570\u65e0\u6548\u6392\u9664\uff1a{rejectedAttackCount}",
                     $"- \u56e0\u4f24\u5bb3\u503c\u65e0\u6548\u6392\u9664\uff1a{rejectedDamage}",
                     $"- \u56e0\u6bb5\u65f6\u5e8f\u7f3a\u5931\u6392\u9664\uff1a{rejectedTimings}",
+                    $"- 仅 ball 暂不默认采集：{rejectedBallOnly}",
+                    $"- 辅助/召唤/治疗/控制类排除：{rejectedUtility}",
                     $"- \u6700\u7ec8\u5165\u6c60\u6280\u80fd\u6570\uff1a{_autoCaptureSkillBuiltCount}",
                     $"- \u5176\u4e2d\u5e26 hit \u7279\u6548\u6280\u80fd\u6570\uff1a{_autoCaptureSkillWithEffectCount}",
                     $"- \u65e0 hit \u7279\u6548\u4f46\u4ecd\u53ef\u7528\u6280\u80fd\u6570\uff1a{Math.Max(0, _autoCaptureSkillBuiltCount - _autoCaptureSkillWithEffectCount)}",
+                    $"- invisible 但保留：{acceptedInvisible}",
                     ""
                 };
 
@@ -788,6 +914,26 @@ namespace HaCreator.MapSimulator
             {
                 return "\u4e0d\u662f\u653b\u51fb\u6280\u80fd";
             }
+            if (string.Equals(reason, "missing_hit_or_ball", StringComparison.Ordinal))
+            {
+                return "缺少 hit/ball";
+            }
+            if (string.Equals(reason, "job_out_of_range", StringComparison.Ordinal))
+            {
+                return "Job 范围外";
+            }
+            if (string.Equals(reason, "name_blacklist", StringComparison.Ordinal))
+            {
+                return "名称黑名单";
+            }
+            if (string.Equals(reason, "utility_skill", StringComparison.Ordinal))
+            {
+                return "辅助/召唤/治疗/控制类";
+            }
+            if (string.Equals(reason, "ball_only_disabled", StringComparison.Ordinal))
+            {
+                return "仅 ball，暂不默认采集";
+            }
             if (string.Equals(reason, "no_levels", StringComparison.Ordinal))
             {
                 return "\u7f3a\u5c11\u7b49\u7ea7\u6570\u636e";
@@ -839,7 +985,7 @@ namespace HaCreator.MapSimulator
 
                 var lines = new List<string>
                 {
-                    "\u6280\u80fdID,\u6280\u80fd\u540d,Job,\u653b\u51fb\u6bb5\u6570,\u4f24\u5bb3\u503c,\u66b4\u51fb\u7387,\u547d\u4e2d\u7279\u6548,\u89c6\u89c9\u65cf,\u906e\u6321\u7ea7\u522b"
+                    "\u6280\u80fdID,\u6280\u80fd\u540d,Job,\u653b\u51fb\u6bb5\u6570,\u4f24\u5bb3\u503c,\u66b4\u51fb\u7387,\u547d\u4e2d\u7279\u6548,has_hit,has_ball,has_action,is_invisible,pool_group,pool_reason,\u89c6\u89c9\u65cf,\u906e\u6321\u7ea7\u522b"
                 };
 
                 foreach (var entry in _autoCaptureNativeDamageSkillPool.OrderBy(s => s.SkillId))
@@ -853,6 +999,12 @@ namespace HaCreator.MapSimulator
                         entry.DamagePercent,
                         entry.CriticalRatePercent,
                         EscapeCsvField(entry.CachedHitEffect != null ? "\u6709" : "\u65e0"),
+                        entry.HasHitNode ? "1" : "0",
+                        entry.HasBallNode ? "1" : "0",
+                        entry.HasActionNode ? "1" : "0",
+                        entry.IsInvisible ? "1" : "0",
+                        EscapeCsvField(entry.PoolGroup),
+                        EscapeCsvField(entry.PoolReason),
                         EscapeCsvField(entry.VisualFamily),
                         EscapeCsvField(entry.OcclusionLevel)));
                 }
@@ -879,7 +1031,7 @@ namespace HaCreator.MapSimulator
 
                 var lines = new List<string>
                 {
-                    "\u6280\u80fdID,\u6280\u80fd\u540d,Job,\u662f\u5426\u653b\u51fb\u6280\u80fd,\u7b49\u7ea7\u6570,\u653b\u51fb\u6bb5\u6570,\u4f24\u5bb3\u503c,\u547d\u4e2d\u7279\u6548,\u7b5b\u9664\u539f\u56e0,\u539f\u56e0\u8bf4\u660e"
+                    "\u6280\u80fdID,\u6280\u80fd\u540d,Job,\u662f\u5426\u653b\u51fb\u6280\u80fd,\u7b49\u7ea7\u6570,\u653b\u51fb\u6bb5\u6570,\u4f24\u5bb3\u503c,\u547d\u4e2d\u7279\u6548,has_hit,has_ball,has_action,is_invisible,pool_group,\u7b5b\u9664\u539f\u56e0,\u539f\u56e0\u8bf4\u660e"
                 };
 
                 foreach (var record in _autoCaptureSkillRejectRecords.OrderBy(r => r.SkillId))
@@ -896,6 +1048,11 @@ namespace HaCreator.MapSimulator
                         record.AttackCount,
                         record.Damage,
                         EscapeCsvField(record.HasHitEffect ? "\u6709" : "\u65e0"),
+                        record.HasHitNode ? "1" : "0",
+                        record.HasBallNode ? "1" : "0",
+                        record.HasActionNode ? "1" : "0",
+                        record.IsInvisible ? "1" : "0",
+                        EscapeCsvField(record.PoolGroup),
                         EscapeCsvField(GetAutoCaptureSkillRejectReasonTextSafe(record.ReasonCode)),
                         EscapeCsvField(BuildAutoCaptureSkillRejectDetail(record))));
                 }
@@ -936,14 +1093,14 @@ namespace HaCreator.MapSimulator
                     {
                         lines.Add($"## {group.Key}\uff08{group.Count()}\uff09");
                         lines.Add("");
-                        lines.Add("| Skill ID | \u6280\u80fd\u540d | Job | \u547d\u4e2d\u7279\u6548 | \u539f\u56e0\u8bf4\u660e |");
-                        lines.Add("| ---: | :--- | ---: | :---: | :--- |");
+                        lines.Add("| Skill ID | \u6280\u80fd\u540d | Job | hit | ball | action | invisible | \u539f\u56e0\u8bf4\u660e |");
+                        lines.Add("| ---: | :--- | ---: | :---: | :---: | :---: | :---: | :--- |");
                         foreach (var record in group.OrderBy(r => r.SkillId))
                         {
                             string skillName = string.IsNullOrWhiteSpace(record.Name)
                                 ? GetAutoCaptureSkillDisplayName(record.SkillId, null)
                                 : record.Name;
-                            lines.Add($"| {record.SkillId} | {skillName} | {record.Job} | {(record.HasHitEffect ? "\u6709" : "\u65e0")} | {BuildAutoCaptureSkillRejectDetail(record)} |");
+                            lines.Add($"| {record.SkillId} | {skillName} | {record.Job} | {BoolZh(record.HasHitNode)} | {BoolZh(record.HasBallNode)} | {BoolZh(record.HasActionNode)} | {BoolZh(record.IsInvisible)} | {BuildAutoCaptureSkillRejectDetail(record)} |");
                         }
                         lines.Add("");
                     }
@@ -1028,6 +1185,11 @@ namespace HaCreator.MapSimulator
                 return "\"" + text.Replace("\"", "\"\"") + "\"";
             }
             return text;
+        }
+
+        private static string BoolZh(bool value)
+        {
+            return value ? "有" : "无";
         }
 
         private static string InferAutoCaptureSkillOcclusionLevel(SkillData skill, SkillLevelData levelData)
@@ -1219,6 +1381,7 @@ namespace HaCreator.MapSimulator
             bool isBlacklisted = blacklist.Any(word => skillName.Contains(word));
             skill.Name = skillName;
             skill.AutoCapHasActionNode = hasAction;
+            skill.AutoCapHasHitNode = hasHit;
             skill.AutoCapHasBallNode = hasBall;
             skill.Invisible = isInvisible;
             skill.IsAttack = (hasHit || hasBall) && (jobId >= 100 && jobId < 8000) && !isBlacklisted;

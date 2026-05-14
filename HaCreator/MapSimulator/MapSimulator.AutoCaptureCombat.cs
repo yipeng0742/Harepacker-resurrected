@@ -244,7 +244,10 @@ namespace HaCreator.MapSimulator
                     continue;
                 }
 
-                int segmentCount = ResolveSegmentCountByTemplate(_autoCapturePointDamageTemplate);
+                AutoCapNativeDamageSkillEntry selectedSkill = PickAutoCapturePointSkill();
+                int segmentCount = selectedSkill?.AttackCount > 0
+                    ? selectedSkill.AttackCount
+                    : ResolveSegmentCountByTemplate(_autoCapturePointDamageTemplate);
                 if (segmentCount <= 0)
                 {
                     segmentCount = 1;
@@ -255,11 +258,10 @@ namespace HaCreator.MapSimulator
                 int xOffset = _autoCaptureRandom?.Next(-6, 7) ?? 0;
                 int yOffset = _autoCaptureRandom?.Next(-8, 9) ?? 0;
                 int emittedForMob = 0;
-                AutoCapNativeDamageSkillEntry selectedSkill = PickAutoCapturePointSkill();
 
                 for (int burst = 0; burst < segmentCount; burst++)
                 {
-                    int segmentOffset = ResolveSegmentTickOffsetMs(_autoCapturePointDamageTemplate, burst);
+                    int segmentOffset = ResolveAutoCaptureSegmentTickOffset(selectedSkill, burst);
                     bool emitMiss = ShouldEmitAutoCaptureMiss();
                     if (combat == null) break;
                     if (!IsMobInCameraView(mob))
@@ -330,6 +332,18 @@ namespace HaCreator.MapSimulator
             }
 
             return null;
+        }
+
+        private int ResolveAutoCaptureSegmentTickOffset(AutoCapNativeDamageSkillEntry skill, int segmentIndex)
+        {
+            if (skill?.SegmentOffsetsMs != null &&
+                segmentIndex >= 0 &&
+                segmentIndex < skill.SegmentOffsetsMs.Length)
+            {
+                return Math.Max(0, skill.SegmentOffsetsMs[segmentIndex]);
+            }
+
+            return ResolveSegmentTickOffsetMs(_autoCapturePointDamageTemplate, segmentIndex);
         }
 
         private int ResolveDynamicBoundEventFrameLimit(int visibleMobCount)
