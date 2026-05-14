@@ -76,7 +76,11 @@ namespace HaCreator.MapSimulator
             _autoCaptureProfileSwitchTick = Environment.TickCount;
             _autoCaptureDmgLastTickByMob.Clear();
             _autoCapturePointSkillPool.Clear();
-            _autoCaptureSkillRejectRows.Clear();
+            _autoCaptureSkillRejectRecords.Clear();
+            _autoCaptureSkillScannedCount = 0;
+            _autoCaptureSkillParseErrorCount = 0;
+            _autoCaptureSkillBuiltCount = 0;
+            _autoCaptureSkillWithEffectCount = 0;
             _autoCaptureBucketAttempted.Clear();
             _autoCaptureBucketSaved.Clear();
             _autoCaptureBucketAttemptedSnapshot.Clear();
@@ -118,23 +122,6 @@ namespace HaCreator.MapSimulator
             _autoCaptureRealSkillEffectTriggerCount = 0;
             _autoCaptureLastCompleteLogFrame = -1;
             _autoCaptureCompletionHandled = false;
-            _autoCaptureBucketManifestPath = null;
-
-            if (!string.IsNullOrWhiteSpace(_autoCaptureOptions.OutputDir))
-            {
-                _autoCaptureBucketManifestPath = Path.Combine(_autoCaptureOptions.OutputDir, "bucket_manifest.csv");
-                try
-                {
-                    File.WriteAllText(
-                        _autoCaptureBucketManifestPath,
-                        "frame,bucket,profile,saved,raw,usable,forced_hit,damage_event" + Environment.NewLine,
-                        Encoding.UTF8);
-                }
-                catch
-                {
-                    _autoCaptureBucketManifestPath = null;
-                }
-            }
 
             BuildAutoCaptureNativeDamageSkillPool();
             _autoCaptureLoadedRealSkillEffectCount = LoadAutoCaptureRealSkillEffects();
@@ -170,6 +157,8 @@ namespace HaCreator.MapSimulator
                 out string skillSource,
                 out int scannedSkillNodes,
                 out int parseErrors);
+            _autoCaptureSkillScannedCount = scannedSkillNodes;
+            _autoCaptureSkillParseErrorCount = parseErrors;
 
             if (allSkills.Count == 0)
             {
@@ -212,13 +201,14 @@ namespace HaCreator.MapSimulator
                 _autoCaptureNativeDamageSkillPool.Add(entry);
             }
 
-            string catalogPath = ResolveAutoCaptureSkillCatalogPath();
-            ExportAutoCaptureSkillManifest();
-            ExportAutoCaptureSkillRejects();
-            ExportOrUpdateAutoCaptureSkillCatalog(catalogPath);
-
             int builtCount = _autoCaptureNativeDamageSkillPool.Count;
             int withEffectCount = _autoCaptureNativeDamageSkillPool.Count(s => s.CachedHitEffect != null);
+            _autoCaptureSkillBuiltCount = builtCount;
+            _autoCaptureSkillWithEffectCount = withEffectCount;
+            string catalogPath = ResolveAutoCaptureSkillCatalogPath();
+            ExportAutoCaptureSkillManifest();
+            ExportAutoCaptureSkillRejectSummary();
+            ExportOrUpdateAutoCaptureSkillCatalog(catalogPath);
             System.Console.WriteLine($"[AutoCap][native_dmg_pool] source={skillSource} scanned={scannedSkillNodes} built={builtCount} with_hit_effect={withEffectCount} total_skills={allSkills.Count} timing_source=flexible catalog_path={catalogPath} reject_not_attack={rejectedAttack} reject_no_levels={rejectedNoLevels} reject_attack_count={rejectedAttackCount} reject_damage={rejectedDamage} reject_timings={rejectedTimings}");
 
             if (builtCount <= 0)
@@ -320,9 +310,19 @@ namespace HaCreator.MapSimulator
         {
             try
             {
+                string manifestPath = Path.Combine(GetAutoCaptureSummaryRootDir(), "AutoCapSkillManifest.md");
+                if (File.Exists(manifestPath))
+                {
+                    return;
+                }
+
+                string mapId = _autoCaptureOptions?.MapId.ToString("D9") ?? "unknown";
+                string resolutionName = _autoCaptureOptions?.ResolutionName ?? "unknown";
                 var manifestLines = new List<string>
                 {
-                    "# AutoCapture Skill Manifest",
+                    $"## 地图 {mapId} / 分辨率 {resolutionName}",
+                    "",
+                    $"- 技能数：{_autoCaptureNativeDamageSkillPool.Count}",
                     "",
                     "| Skill ID | Chinese Name | Job ID | Family | Occlusion | AttackCount | Damage |",
                     "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
@@ -340,7 +340,10 @@ namespace HaCreator.MapSimulator
                     manifestLines.Add($"| {entry.SkillId} | {skillName} | {entry.Job} | {entry.VisualFamily} | {entry.OcclusionLevel} | {entry.AttackCount} | {entry.DamagePercent} |");
                 }
 
-                WriteAutoCaptureTextArtifact("AutoCapSkillManifest.md", string.Join(Environment.NewLine, manifestLines));
+                AppendAutoCaptureMarkdownSummary(
+                    "AutoCapSkillManifest.md",
+                    "# AutoCapture Skill Manifest",
+                    string.Join(Environment.NewLine, manifestLines));
             }
             catch (Exception ex)
             {
@@ -352,12 +355,10 @@ namespace HaCreator.MapSimulator
         {
             try
             {
-                var lines = new List<string>
-                {
-                    "skill_id,name,job,is_attack,level_count,attack_count,damage,reject_reason"
-                };
-                lines.AddRange(_autoCaptureSkillRejectRows);
-                WriteAutoCaptureTextArtifact("AutoCapSkillRejects.csv", string.Join(Environment.NewLine, lines));
+                AppendAutoCaptureCsvSummary(
+                    "AutoCapSkillRejects.csv",
+                    "map_id,resolution,skill_id,name,job,is_attack,level_count,attack_count,damage,reject_reason",
+                    _autoCaptureSkillRejectRows);
             }
             catch (Exception ex)
             {
@@ -377,29 +378,17 @@ namespace HaCreator.MapSimulator
                 .Where(l => l != null)
                 .OrderByDescending(l => l.Level)
                 .FirstOrDefault();
-            int attackCount = levelData?.AttackCount ?? 0;
-            int damage = levelData?.Damage ?? 0;
-            string name = EscapeAutoCaptureCsv(skill.Name);
-            string row = string.Join(",",
-                skill.SkillId,
-                name,
-                skill.Job,
-                skill.IsAttack ? "1" : "0",
-                levelCount,
-                attackCount,
-                damage,
-                EscapeAutoCaptureCsv(reason));
-            _autoCaptureSkillRejectRows.Add(row);
-        }
-
-        private static string EscapeAutoCaptureCsv(string value)
-        {
-            string text = value ?? string.Empty;
-            if (text.Contains(",") || text.Contains("\"") || text.Contains("\r") || text.Contains("\n"))
+            _autoCaptureSkillRejectRecords.Add(new AutoCaptureSkillRejectRecord
             {
-                return "\"" + text.Replace("\"", "\"\"") + "\"";
-            }
-            return text;
+                SkillId = skill.SkillId,
+                Name = skill.Name,
+                Job = skill.Job,
+                IsAttack = skill.IsAttack,
+                LevelCount = levelCount,
+                AttackCount = levelData?.AttackCount ?? 0,
+                Damage = levelData?.Damage ?? 0,
+                ReasonCode = reason
+            });
         }
 
         private void ExportOrUpdateAutoCaptureSkillCatalog(string catalogPath)
@@ -461,34 +450,180 @@ namespace HaCreator.MapSimulator
             }
         }
 
-        private void WriteAutoCaptureTextArtifact(string fileName, string content)
+        private string GetAutoCaptureSummaryRootDir()
+        {
+            if (!string.IsNullOrWhiteSpace(_autoCaptureOptions?.JobDir))
+            {
+                return _autoCaptureOptions.JobDir;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_autoCaptureOptions?.OutputRootDir))
+            {
+                return _autoCaptureOptions.OutputRootDir;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_autoCaptureOptions?.OutputDir))
+            {
+                return _autoCaptureOptions.OutputDir;
+            }
+
+            return Environment.CurrentDirectory;
+        }
+
+        private void ExportAutoCaptureCaptureSummary()
+        {
+            try
+            {
+                string mapId = _autoCaptureOptions?.MapId.ToString("D9") ?? "unknown";
+                string resolutionName = _autoCaptureOptions?.ResolutionName ?? "unknown";
+                int attemptedA = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.CleanBaseline);
+                int attemptedB = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.AnchorDecoupling);
+                int attemptedC = GetBucketCount(_autoCaptureBucketAttempted, AutoCaptureDataBucket.ChaosOcclusion);
+                int savedA = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.CleanBaseline);
+                int savedB = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.AnchorDecoupling);
+                int savedC = GetBucketCount(_autoCaptureBucketSaved, AutoCaptureDataBucket.ChaosOcclusion);
+                double saveRate = _autoCaptureCaptureAttempted > 0
+                    ? (double)_autoCaptureCaptureSaved / _autoCaptureCaptureAttempted
+                    : 0d;
+                double avgRaw = _autoCaptureCaptureAttempted > 0
+                    ? (double)_autoCaptureBoundsRawCount / _autoCaptureCaptureAttempted
+                    : 0d;
+                double avgUsable = _autoCaptureCaptureAttempted > 0
+                    ? (double)_autoCaptureBoundsUsableCount / _autoCaptureCaptureAttempted
+                    : 0d;
+
+                var lines = new List<string>
+                {
+                    $"## 地图 {mapId} / 分辨率 {resolutionName}",
+                    "",
+                    $"- 期望帧数：{_autoCaptureExpectedFrameCount}",
+                    $"- 实际采样帧数：{_datasetGenerator?.CapturedFrameCount ?? 0}",
+                    $"- 尝试保存帧数：{_autoCaptureCaptureAttempted}",
+                    $"- 成功保存帧数：{_autoCaptureCaptureSaved}",
+                    $"- 保存失败次数：{_autoCaptureSaveFailCount}",
+                    $"- 保存成功率：{saveRate:0.000}",
+                    $"- 平均原始框数：{avgRaw:0.00}",
+                    $"- 平均可用框数：{avgUsable:0.00}",
+                    $"- 伤害事件触发次数：{_autoCaptureDmgFired}",
+                    $"- 伤害段发射数：{_autoCaptureDmgSegmentsEmitted}",
+                    $"- real skill hit 特效触发次数：{_autoCaptureRealSkillEffectTriggerCount}",
+                    ""
+                };
+
+                lines.Add("### Bucket 分布");
+                lines.Add("");
+                lines.Add("| Bucket | 尝试帧数 | 保存帧数 |");
+                lines.Add("| :--- | ---: | ---: |");
+                lines.Add($"| A / CleanBaseline | {attemptedA} | {savedA} |");
+                lines.Add($"| B / AnchorDecoupling | {attemptedB} | {savedB} |");
+                lines.Add($"| C / ChaosOcclusion | {attemptedC} | {savedC} |");
+
+                string saveFailByReason = FormatSaveFailReasonStats();
+                if (!string.Equals(saveFailByReason, "none", StringComparison.OrdinalIgnoreCase))
+                {
+                    lines.Add("");
+                    lines.Add($"### 保存失败原因");
+                    lines.Add("");
+                    lines.Add($"- {saveFailByReason}");
+                }
+
+                AppendAutoCaptureMarkdownSummary(
+                    "AutoCapCaptureSummary.md",
+                    "# AutoCap Capture Summary",
+                    string.Join(Environment.NewLine, lines));
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap] Failed to export capture summary: {ex.Message}");
+            }
+        }
+
+        private void AppendAutoCaptureMarkdownSummary(string fileName, string title, string body)
         {
             if (string.IsNullOrWhiteSpace(fileName))
             {
                 return;
             }
 
-            var targetDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (!string.IsNullOrWhiteSpace(_autoCaptureOptions.JobDir))
+            try
             {
-                targetDirs.Add(_autoCaptureOptions.JobDir);
+                string rootDir = GetAutoCaptureSummaryRootDir();
+                Directory.CreateDirectory(rootDir);
+                string path = Path.Combine(rootDir, fileName);
+                bool fileExists = File.Exists(path);
+                using (var writer = new StreamWriter(path, true, new UTF8Encoding(true)))
+                {
+                    if (!fileExists)
+                    {
+                        writer.WriteLine(title);
+                        writer.WriteLine();
+                    }
+                    else if (new FileInfo(path).Length > 0)
+                    {
+                        writer.WriteLine();
+                    }
+
+                    writer.WriteLine(body);
+                    writer.WriteLine();
+                }
             }
-            if (!string.IsNullOrWhiteSpace(_autoCaptureOptions.OutputDir))
+            catch (Exception ex)
             {
-                targetDirs.Add(_autoCaptureOptions.OutputDir);
+                System.Console.WriteLine($"[AutoCap] Failed to append summary {fileName}: {ex.Message}");
+            }
+        }
+
+        private void AppendAutoCaptureCsvSummary(string fileName, string header, IEnumerable<string> rows)
+        {
+            if (string.IsNullOrWhiteSpace(fileName) || rows == null)
+            {
+                return;
             }
 
-            foreach (string dir in targetDirs)
+            try
             {
-                try
+                string rootDir = GetAutoCaptureSummaryRootDir();
+                Directory.CreateDirectory(rootDir);
+                string path = Path.Combine(rootDir, fileName);
+                bool fileExists = File.Exists(path);
+                using (var writer = new StreamWriter(path, true, new UTF8Encoding(true)))
                 {
-                    Directory.CreateDirectory(dir);
-                    File.WriteAllText(Path.Combine(dir, fileName), content, new UTF8Encoding(true));
+                    if (!fileExists)
+                    {
+                        writer.WriteLine(header);
+                    }
+
+                    foreach (string row in rows)
+                    {
+                        if (!string.IsNullOrWhiteSpace(row))
+                        {
+                            writer.WriteLine(row);
+                        }
+                    }
                 }
-                catch (Exception ex)
-                {
-                    System.Console.WriteLine($"[AutoCap] Failed to write artifact {fileName} to {dir}: {ex.Message}");
-                }
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap] Failed to append summary {fileName}: {ex.Message}");
+            }
+        }
+
+        private static string GetAutoCaptureSkillRejectReasonText(string reason)
+        {
+            switch (reason)
+            {
+                case "not_attack":
+                    return "非攻击技能";
+                case "no_levels":
+                    return "缺少等级数据";
+                case "attack_count":
+                    return "攻击段数无效";
+                case "damage":
+                    return "伤害值无效";
+                case "timings":
+                    return "段时序缺失";
+                default:
+                    return string.IsNullOrWhiteSpace(reason) ? "未说明" : reason;
             }
         }
 
@@ -517,6 +652,135 @@ namespace HaCreator.MapSimulator
                 return "combo";
             }
             return "impact";
+        }
+
+        private void ExportAutoCaptureSkillRejectSummary()
+        {
+            try
+            {
+                string summaryPath = Path.Combine(GetAutoCaptureSummaryRootDir(), "AutoCapSkillRejectSummary.md");
+                if (File.Exists(summaryPath))
+                {
+                    return;
+                }
+
+                string mapId = _autoCaptureOptions?.MapId.ToString("D9") ?? "unknown";
+                string resolutionName = _autoCaptureOptions?.ResolutionName ?? "unknown";
+                int rejectedCount = _autoCaptureSkillRejectRecords.Count;
+                int parsedSkillCount = _autoCaptureSkillScannedCount - _autoCaptureSkillParseErrorCount;
+                int rejectedNotAttack = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "not_attack", StringComparison.Ordinal));
+                int rejectedNoLevels = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "no_levels", StringComparison.Ordinal));
+                int rejectedAttackCount = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "attack_count", StringComparison.Ordinal));
+                int rejectedDamage = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "damage", StringComparison.Ordinal));
+                int rejectedTimings = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "timings", StringComparison.Ordinal));
+                int parsedAttackCount = parsedSkillCount - rejectedNotAttack;
+                var reasonGroups = _autoCaptureSkillRejectRecords
+                    .GroupBy(r => GetAutoCaptureSkillRejectReasonTextSafe(r.ReasonCode))
+                    .OrderByDescending(g => g.Count())
+                    .ThenBy(g => g.Key, StringComparer.Ordinal);
+
+                var lines = new List<string>
+                {
+                    $"## 地图 {mapId} / 分辨率 {resolutionName}",
+                    "",
+                    "### 技能漏斗",
+                    "",
+                    $"- 扫描技能节点：{_autoCaptureSkillScannedCount}",
+                    $"- 解析成功技能：{parsedSkillCount}",
+                    $"- 解析异常数：{_autoCaptureSkillParseErrorCount}",
+                    $"- 非攻击技能排除：{rejectedNotAttack}",
+                    $"- 攻击技能候选：{parsedAttackCount}",
+                    $"- 因缺少等级数据排除：{rejectedNoLevels}",
+                    $"- 因攻击段数无效排除：{rejectedAttackCount}",
+                    $"- 因伤害值无效排除：{rejectedDamage}",
+                    $"- 因段时序缺失排除：{rejectedTimings}",
+                    $"- 最终入池技能数：{_autoCaptureSkillBuiltCount}",
+                    $"- 其中带 hit 特效技能数：{_autoCaptureSkillWithEffectCount}",
+                    $"- 无 hit 特效但仍可用技能数：{Math.Max(0, _autoCaptureSkillBuiltCount - _autoCaptureSkillWithEffectCount)}",
+                    ""
+                };
+
+                if (rejectedCount == 0)
+                {
+                    lines.Add("- 本图没有任何技能被规则筛除。");
+                }
+                else
+                {
+                    lines.Add("### 原因统计");
+                    lines.Add("");
+                    lines.Add("| 原因 | 数量 |");
+                    lines.Add("| :--- | ---: |");
+                    foreach (var group in reasonGroups)
+                    {
+                        lines.Add($"| {group.Key} | {group.Count()} |");
+                    }
+
+                    lines.Add("");
+                    lines.Add("### 代表样例");
+                    lines.Add("");
+                    lines.Add("| 原因 | Skill ID | 名称 | Job | 说明 |");
+                    lines.Add("| :--- | ---: | :--- | ---: | :--- |");
+
+                    foreach (var group in reasonGroups)
+                    {
+                        AutoCaptureSkillRejectRecord sample = group.OrderBy(r => r.SkillId).First();
+                        string sampleName = string.IsNullOrWhiteSpace(sample.Name) ? "未命名" : sample.Name;
+                        lines.Add($"| {group.Key} | {sample.SkillId} | {sampleName} | {sample.Job} | {BuildAutoCaptureSkillRejectDetail(sample)} |");
+                    }
+                }
+
+                AppendAutoCaptureMarkdownSummary(
+                    "AutoCapSkillRejectSummary.md",
+                    "# AutoCapture Skill Reject Summary",
+                    string.Join(Environment.NewLine, lines));
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap] Failed to export skill reject summary: {ex.Message}");
+            }
+        }
+
+        private static string GetAutoCaptureSkillRejectReasonTextSafe(string reason)
+        {
+            switch (reason)
+            {
+                case "not_attack":
+                    return "非攻击技能";
+                case "no_levels":
+                    return "缺少等级数据";
+                case "attack_count":
+                    return "攻击段数无效";
+                case "damage":
+                    return "伤害值无效";
+                case "timings":
+                    return "段时序缺失";
+                default:
+                    return string.IsNullOrWhiteSpace(reason) ? "未说明" : reason;
+            }
+        }
+
+        private static string BuildAutoCaptureSkillRejectDetail(AutoCaptureSkillRejectRecord record)
+        {
+            if (record == null)
+            {
+                return "无";
+            }
+
+            switch (record.ReasonCode)
+            {
+                case "not_attack":
+                    return $"is_attack={(record.IsAttack ? 1 : 0)}";
+                case "no_levels":
+                    return $"level_count={record.LevelCount}";
+                case "attack_count":
+                    return $"attack_count={record.AttackCount}";
+                case "damage":
+                    return $"damage={record.Damage}";
+                case "timings":
+                    return $"attack_count={record.AttackCount}，无法解析段时序";
+                default:
+                    return "无额外说明";
+            }
         }
 
         private static string InferAutoCaptureSkillOcclusionLevel(SkillData skill, SkillLevelData levelData)

@@ -14,6 +14,14 @@ namespace HaCreator.MapSimulator.Automation
 {
     internal static class AutoCaptureCliRunner
     {
+        private sealed class AutoCaptureFailureRecord
+        {
+            public int MapId { get; set; }
+            public string ResolutionName { get; set; }
+            public string Stage { get; set; }
+            public string Message { get; set; }
+        }
+
         private sealed class AutoCaptureJob
         {
             public string map_list_path { get; set; }
@@ -250,6 +258,7 @@ namespace HaCreator.MapSimulator.Automation
                 }
 
                 Directory.CreateDirectory(outputRoot);
+                ResetJobSummaryArtifacts(jobDir);
                 Console.WriteLine("[AutoCap] 数据源与地图校验通过。");
 
                 if (dryRun)
@@ -259,6 +268,7 @@ namespace HaCreator.MapSimulator.Automation
                 }
 
                 int failCount = 0;
+                var failures = new List<AutoCaptureFailureRecord>();
                 foreach (string resolutionName in jobResolutions)
                 {
                     if (!TryResolveResolution(resolutionName, out RenderResolution resolution))
@@ -280,6 +290,13 @@ namespace HaCreator.MapSimulator.Automation
                             {
                                 Console.WriteLine($"[AutoCap][错误] 构建地图失败: {mapId:D9}");
                                 failCount++;
+                                failures.Add(new AutoCaptureFailureRecord
+                                {
+                                    MapId = mapId,
+                                    ResolutionName = resolutionName,
+                                    Stage = "load_board",
+                                    Message = "build_board_failed"
+                                });
                                 continue;
                             }
 
@@ -319,6 +336,13 @@ namespace HaCreator.MapSimulator.Automation
                         {
                             AutoCaptureRuntime.Current = null;
                             failCount++;
+                            failures.Add(new AutoCaptureFailureRecord
+                            {
+                                MapId = mapId,
+                                ResolutionName = resolutionName,
+                                Stage = "capture",
+                                Message = ex.Message
+                            });
                             Console.WriteLine($"[AutoCap][错误] map={mapId:D9} res={resolutionName} 采集失败: {ex.Message}");
                         }
                     }
@@ -326,6 +350,7 @@ namespace HaCreator.MapSimulator.Automation
 
                 if (failCount > 0)
                 {
+                    WriteFailureReports(jobDir, failures);
                     Console.WriteLine($"[AutoCap] 完成，但存在失败项: {failCount}");
                     return 4;
                 }
@@ -431,6 +456,60 @@ namespace HaCreator.MapSimulator.Automation
             return list;
         }
 
+        private static void WriteFailureReports(string jobDir, List<AutoCaptureFailureRecord> failures)
+        {
+            if (string.IsNullOrWhiteSpace(jobDir) || failures == null || failures.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(jobDir);
+
+                string csvPath = Path.Combine(jobDir, "AutoCapFailedMaps.csv");
+                var csvLines = new List<string> { "map_id,resolution,stage,message" };
+                foreach (var failure in failures)
+                {
+                    csvLines.Add(
+                        $"{failure.MapId:D9},{EscapeCsv(failure.ResolutionName)},{EscapeCsv(failure.Stage)},{EscapeCsv(failure.Message)}");
+                }
+                File.WriteAllLines(csvPath, csvLines);
+
+                string retryPath = Path.Combine(jobDir, "AutoCapRetryMapList.txt");
+                string[] retryMapIds = failures
+                    .Select(f => f.MapId)
+                    .Distinct()
+                    .OrderBy(id => id)
+                    .Select(id => id.ToString("D9"))
+                    .ToArray();
+                File.WriteAllLines(retryPath, retryMapIds);
+
+                Console.WriteLine($"[AutoCap][failure_report] csv={csvPath}");
+                Console.WriteLine($"[AutoCap][failure_report] retry_map_list={retryPath} count={retryMapIds.Length}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AutoCap][璀﹀憡] failure report write failed: {ex.Message}");
+            }
+        }
+
+        private static string EscapeCsv(string value)
+        {
+            string text = value ?? string.Empty;
+            if (text.Contains("\""))
+            {
+                text = text.Replace("\"", "\"\"");
+            }
+
+            if (text.Contains(",") || text.Contains("\"") || text.Contains("\r") || text.Contains("\n"))
+            {
+                return $"\"{text}\"";
+            }
+
+            return text;
+        }
+
         private static void InitializeDataSource(string versionPath)
         {
             Program.InfoManager ??= new WzInformationManager();
@@ -446,6 +525,37 @@ namespace HaCreator.MapSimulator.Automation
         {
             var extractor = new ImgDataExtractor(Program.DataSource, Program.InfoManager);
             extractor.ExtractAll();
+        }
+
+        private static void ResetJobSummaryArtifacts(string jobDir)
+        {
+            if (string.IsNullOrWhiteSpace(jobDir))
+            {
+                return;
+            }
+
+            string[] files =
+            {
+                "AutoCapSkillManifest.md",
+                "AutoCapSkillRejectSummary.md",
+                "AutoCapCaptureSummary.md"
+            };
+
+            foreach (string fileName in files)
+            {
+                try
+                {
+                    string path = Path.Combine(jobDir, fileName);
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[AutoCap][warning] failed to reset summary artifact {fileName}: {ex.Message}");
+                }
+            }
         }
 
         private static List<int> ValidateMapsExist(List<int> mapIds)

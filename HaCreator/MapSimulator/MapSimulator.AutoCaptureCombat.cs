@@ -74,19 +74,7 @@ namespace HaCreator.MapSimulator
             bool forcedHitState,
             bool damageEventTriggered)
         {
-            if (string.IsNullOrWhiteSpace(_autoCaptureBucketManifestPath))
-            {
-                return;
-            }
-
-            try
-            {
-                string line = $"{frameNo},bucket={GetBucketCode(bucket)},profile={profile},saved={(saved ? 1 : 0)},raw={rawBoxes},usable={usableBoxes},forced_hit={(forcedHitState ? 1 : 0)},damage_event={(damageEventTriggered ? 1 : 0)}";
-                File.AppendAllText(_autoCaptureBucketManifestPath, line + Environment.NewLine, Encoding.UTF8);
-            }
-            catch
-            {
-            }
+            return;
         }
 
         private void ApplyAutoCaptureAugmentation(int tick)

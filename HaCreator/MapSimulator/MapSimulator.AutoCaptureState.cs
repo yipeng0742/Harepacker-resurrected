@@ -68,6 +68,11 @@ namespace HaCreator.MapSimulator
         private readonly List<AutoCapNativeDamageSkillEntry> _autoCaptureNativeDamageSkillPool = new List<AutoCapNativeDamageSkillEntry>();
         private readonly List<AutoCapNativeDamageSkillEntry> _autoCapturePointSkillPool = new List<AutoCapNativeDamageSkillEntry>();
         private readonly List<string> _autoCaptureSkillRejectRows = new List<string>();
+        private readonly List<AutoCaptureSkillRejectRecord> _autoCaptureSkillRejectRecords = new List<AutoCaptureSkillRejectRecord>();
+        private int _autoCaptureSkillScannedCount = 0;
+        private int _autoCaptureSkillParseErrorCount = 0;
+        private int _autoCaptureSkillBuiltCount = 0;
+        private int _autoCaptureSkillWithEffectCount = 0;
         private int _autoCapturePointRecipeSeed = 0;
         private AutoCapDamageTemplate _autoCapturePointDamageTemplate = AutoCapDamageTemplate.Single;
         private int _autoCaptureLoadedRealSkillEffectCount = 0;
@@ -107,6 +112,18 @@ namespace HaCreator.MapSimulator
             public string Name { get; set; }
             public bool Enabled { get; set; }
             public int Job { get; set; }
+        }
+
+        private sealed class AutoCaptureSkillRejectRecord
+        {
+            public int SkillId { get; set; }
+            public string Name { get; set; }
+            public int Job { get; set; }
+            public bool IsAttack { get; set; }
+            public int LevelCount { get; set; }
+            public int AttackCount { get; set; }
+            public int Damage { get; set; }
+            public string ReasonCode { get; set; }
         }
 
         private int _autoCaptureDmgAttemptedSnapshot = 0;

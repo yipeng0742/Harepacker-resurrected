@@ -17,15 +17,7 @@ namespace HaCreator.MapSimulator
                 throw new InvalidOperationException("E_AUTOCAP_CAMERA_PATH_INVALID: viewport is invalid.");
             }
 
-            int rawMinX = (int)Math.Round(_vrFieldBoundary.Left * _renderParams.RenderObjectScaling);
-            int rawMinY = (int)Math.Round(_vrFieldBoundary.Top * _renderParams.RenderObjectScaling);
-            int rawMaxX = (int)Math.Round(_vrFieldBoundary.Right * _renderParams.RenderObjectScaling) - _renderParams.RenderWidth;
-            int rawMaxY = (int)Math.Round(_vrFieldBoundary.Bottom * _renderParams.RenderObjectScaling) - _renderParams.RenderHeight;
-
-            int minX = Math.Min(rawMinX, rawMaxX);
-            int minY = Math.Min(rawMinY, rawMaxY);
-            int maxX = Math.Max(rawMinX, rawMaxX);
-            int maxY = Math.Max(rawMinY, rawMaxY);
+            GetAutoCaptureCameraBounds(out int minX, out int maxX, out int minY, out int maxY);
             if (maxX < minX || maxY < minY)
             {
                 throw new InvalidOperationException($"E_AUTOCAP_CAMERA_PATH_INVALID: invalid map bounds min=({minX},{minY}) max=({maxX},{maxY}).");
@@ -46,7 +38,11 @@ namespace HaCreator.MapSimulator
                 IReadOnlyList<int> rowPoints = (rowIndex % 2 == 0) ? xPoints : Enumerable.Reverse(xPoints).ToArray();
                 foreach (int x in rowPoints)
                 {
-                    _autoCaptureScanPath.Add(new Point(x, y));
+                    Point normalized = ClampAutoCaptureCameraPoint(new Point(x, y));
+                    if (_autoCaptureScanPath.Count == 0 || _autoCaptureScanPath[_autoCaptureScanPath.Count - 1] != normalized)
+                    {
+                        _autoCaptureScanPath.Add(normalized);
+                    }
                 }
             }
 
@@ -56,6 +52,45 @@ namespace HaCreator.MapSimulator
             }
 
             System.Console.WriteLine($"[AutoCap] camera_grid total_points={_autoCaptureScanPath.Count} step_x={stepX} step_y={stepY}");
+        }
+
+        private void GetAutoCaptureCameraBounds(out int minX, out int maxX, out int minY, out int maxY)
+        {
+            float scale = _renderParams.RenderObjectScaling;
+
+            int leftRightVRDifference = (int)((_vrFieldBoundary.Right - _vrFieldBoundary.Left) * scale);
+            if (leftRightVRDifference < _renderParams.RenderWidth)
+            {
+                int centeredX = ((leftRightVRDifference / 2) + (int)(_vrFieldBoundary.Left * scale)) - (_renderParams.RenderWidth / 2);
+                minX = centeredX;
+                maxX = centeredX;
+            }
+            else
+            {
+                minX = (int)(_vrFieldBoundary.Left * scale);
+                maxX = (int)(_vrFieldBoundary.Right - (_renderParams.RenderWidth / scale));
+            }
+
+            int topDownVRDifference = (int)((_vrFieldBoundary.Bottom - _vrFieldBoundary.Top) * scale);
+            if (topDownVRDifference < _renderParams.RenderHeight)
+            {
+                int centeredY = ((topDownVRDifference / 2) + (int)(_vrFieldBoundary.Top * scale)) - (_renderParams.RenderHeight / 2);
+                minY = centeredY;
+                maxY = centeredY;
+            }
+            else
+            {
+                minY = (int)(_vrFieldBoundary.Top * scale);
+                maxY = (int)(_vrFieldBoundary.Bottom - (_renderParams.RenderHeight / scale));
+            }
+        }
+
+        private Point ClampAutoCaptureCameraPoint(Point point)
+        {
+            GetAutoCaptureCameraBounds(out int minX, out int maxX, out int minY, out int maxY);
+            int clampedX = Math.Max(minX, Math.Min(maxX, point.X));
+            int clampedY = Math.Max(minY, Math.Min(maxY, point.Y));
+            return new Point(clampedX, clampedY);
         }
 
         private static List<int> BuildAxisPoints(int minValue, int maxValue, int step)
@@ -138,12 +173,15 @@ namespace HaCreator.MapSimulator
             }
 
             Point p = _autoCaptureScanPath[nextPointIndex];
-            mapShiftX = p.X;
-            mapShiftY = p.Y;
+            Point applied = ClampAutoCaptureCameraPoint(p);
+            mapShiftX = applied.X;
+            mapShiftY = applied.Y;
             ClampCameraToBoundaries();
-            if (mapShiftX != p.X || mapShiftY != p.Y)
+            Point finalPoint = new Point(mapShiftX, mapShiftY);
+            if (finalPoint != p)
             {
-                throw new InvalidOperationException("E_AUTOCAP_CAMERA_PATH_INVALID: camera point clamped out of range.");
+                System.Console.WriteLine($"[AutoCap][camera_path_fixup] map={_autoCaptureOptions?.MapId:D9} res={_autoCaptureOptions?.ResolutionName} point_idx={nextPointIndex + 1}/{_autoCaptureScanPath.Count} requested=({p.X},{p.Y}) applied=({finalPoint.X},{finalPoint.Y})");
+                _autoCaptureScanPath[nextPointIndex] = finalPoint;
             }
 
             _autoCaptureCurrentPointIndex = nextPointIndex;
@@ -183,6 +221,7 @@ namespace HaCreator.MapSimulator
             int capturedFrames = _datasetGenerator?.CapturedFrameCount ?? 0;
             _autoCaptureLastCompleteLogFrame = capturedFrames;
             System.Console.WriteLine($"[AutoCap][complete] map={_autoCaptureOptions?.MapId:D9} res={_autoCaptureOptions?.ResolutionName} captured_frames={capturedFrames} expected_frames={_autoCaptureExpectedFrameCount} point_idx={_autoCaptureCurrentPointIndex + 1}/{_autoCaptureTotalPointCount} real_skill_fx_triggers={_autoCaptureRealSkillEffectTriggerCount}");
+            ExportAutoCaptureCaptureSummary();
             try
             {
                 _datasetGenerator?.StopGeneration();
