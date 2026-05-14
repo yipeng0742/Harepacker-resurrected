@@ -68,8 +68,13 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureDmgMobsHitPeakSinceLastLog = 0;
         private readonly List<AutoCapNativeDamageSkillEntry> _autoCaptureNativeDamageSkillPool = new List<AutoCapNativeDamageSkillEntry>();
         private readonly List<AutoCapNativeDamageSkillEntry> _autoCapturePointSkillPool = new List<AutoCapNativeDamageSkillEntry>();
+        private readonly List<string> _autoCaptureSkillRejectRows = new List<string>();
         private int _autoCapturePointRecipeSeed = 0;
         private AutoCapDamageTemplate _autoCapturePointDamageTemplate = AutoCapDamageTemplate.Single;
+        private int _autoCaptureLoadedRealSkillEffectCount = 0;
+        private int _autoCaptureRealSkillEffectTriggerCount = 0;
+        private int _autoCaptureLastCompleteLogFrame = -1;
+        private bool _autoCaptureCompletionHandled = false;
         private static readonly JsonSerializerOptions AutoCaptureSkillCatalogJsonOptions = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,

@@ -77,6 +77,7 @@ namespace HaCreator.MapSimulator
             _autoCaptureProfileSwitchTick = Environment.TickCount;
             _autoCaptureDmgLastTickByMob.Clear();
             _autoCapturePointSkillPool.Clear();
+            _autoCaptureSkillRejectRows.Clear();
             _autoCaptureBucketAttempted.Clear();
             _autoCaptureBucketSaved.Clear();
             _autoCaptureBucketAttemptedSnapshot.Clear();
@@ -114,6 +115,10 @@ namespace HaCreator.MapSimulator
             _autoCaptureTotalPointCount = 0;
             _autoCaptureExpectedFrameCount = 0;
             _autoCaptureCameraPhase = AutoCaptureCameraPhase.Init;
+            _autoCaptureLoadedRealSkillEffectCount = 0;
+            _autoCaptureRealSkillEffectTriggerCount = 0;
+            _autoCaptureLastCompleteLogFrame = -1;
+            _autoCaptureCompletionHandled = false;
             _autoCaptureBucketManifestPath = null;
 
             if (!string.IsNullOrWhiteSpace(_autoCaptureOptions.OutputDir))
@@ -133,6 +138,7 @@ namespace HaCreator.MapSimulator
             }
 
             BuildAutoCaptureNativeDamageSkillPool();
+            _autoCaptureLoadedRealSkillEffectCount = LoadAutoCaptureRealSkillEffects();
             BuildAutoCaptureScanPath();
             _autoCaptureTotalPointCount = _autoCaptureScanPath?.Count ?? 0;
             _autoCaptureExpectedFrameCount = checked(_autoCaptureTotalPointCount * Math.Max(1, _autoCaptureSampleFramesPerPoint));
@@ -147,6 +153,7 @@ namespace HaCreator.MapSimulator
             System.Console.WriteLine($"[AutoCap] camera_plan mode={_autoCaptureCameraPlan.Mode} step_mode={_autoCaptureCameraPlan.Traversal} warmup_frames={_autoCaptureCameraPlan.StartupWarmupFrames} settle_frames={_autoCaptureCameraPlan.SettleFrames} sample_frames_per_point={_autoCaptureCameraPlan.SampleFramesPerPoint}");
             System.Console.WriteLine($"[AutoCap] dmg_num_ctrl global_cd={_autoCaptureDamageNumberControl.GlobalCooldownMs}ms per_mob_cd={_autoCaptureDamageNumberControl.PerMobCooldownMs}ms per_capture_frame={_autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame} max_active_numbers={_autoCaptureDamageNumberControl.MaxActiveNumbers} enable_miss={_autoCaptureDamageNumberControl.EnableMiss} damage_range={_autoCaptureDamageNumberControl.MinDamage}-{_autoCaptureDamageNumberControl.MaxDamage} distribution={_autoCaptureDamageNumberControl.DamageDistributionMode}");
             System.Console.WriteLine($"[AutoCap] hit_effect_ctrl enabled={_autoCaptureHitEffectControl.Enabled} palette={_autoCaptureHitEffectControl.PaletteMode} alpha={_autoCaptureHitEffectControl.AlphaMin:0.##}-{_autoCaptureHitEffectControl.AlphaMax:0.##} scale={_autoCaptureHitEffectControl.ScaleMin:0.##}-{_autoCaptureHitEffectControl.ScaleMax:0.##} lifetime={_autoCaptureHitEffectControl.LifetimeMsMin}-{_autoCaptureHitEffectControl.LifetimeMsMax}ms layers={_autoCaptureHitEffectControl.ExtraLayersMin}-{_autoCaptureHitEffectControl.ExtraLayersMax} jitter={_autoCaptureHitEffectControl.JitterPxX}x{_autoCaptureHitEffectControl.JitterPxY} variations=[{string.Join(",", _autoCaptureHitEffectControl.VariationPool)}]");
+            System.Console.WriteLine($"[AutoCap] real_skill_fx enabled={_autoCaptureRealSkillEffectControl.Enabled} source={_autoCaptureRealSkillEffectControl.Source} kind={_autoCaptureRealSkillEffectControl.Kind} loaded_framesets={_autoCaptureLoadedRealSkillEffectCount}");
             System.Console.WriteLine("[AutoCap] labels class0=mob_dead class1=mob_active");
             System.Console.WriteLine($"[AutoCap] writer_config requested={_autoCaptureOptions.WriterThreads}/{_autoCaptureOptions.WriterQueueCapacity} effective={_datasetGenerator.WriterThreadsEffective}/{_datasetGenerator.WriterQueueCapacityEffective}");
         }
@@ -181,6 +188,7 @@ namespace HaCreator.MapSimulator
             {
                 if (!TryBuildAutoCapNativeDamageSkill(skill, false, out AutoCapNativeDamageSkillEntry entry, out string reason))
                 {
+                    AppendAutoCaptureSkillReject(skill, reason);
                     switch (reason)
                     {
                         case "not_attack":
@@ -208,6 +216,7 @@ namespace HaCreator.MapSimulator
 
             string catalogPath = ResolveAutoCaptureSkillCatalogPath();
             ExportAutoCaptureSkillManifest();
+            ExportAutoCaptureSkillRejects();
             ExportOrUpdateAutoCaptureSkillCatalog(catalogPath);
 
             int builtCount = _autoCaptureNativeDamageSkillPool.Count;
@@ -339,6 +348,60 @@ namespace HaCreator.MapSimulator
             {
                 System.Console.WriteLine($"[AutoCap] Failed to export skill manifest: {ex.Message}");
             }
+        }
+
+        private void ExportAutoCaptureSkillRejects()
+        {
+            try
+            {
+                var lines = new List<string>
+                {
+                    "skill_id,name,job,is_attack,level_count,attack_count,damage,reject_reason"
+                };
+                lines.AddRange(_autoCaptureSkillRejectRows);
+                WriteAutoCaptureTextArtifact("AutoCapSkillRejects.csv", string.Join(Environment.NewLine, lines));
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap] Failed to export skill rejects: {ex.Message}");
+            }
+        }
+
+        private void AppendAutoCaptureSkillReject(SkillData skill, string reason)
+        {
+            if (skill == null)
+            {
+                return;
+            }
+
+            int levelCount = skill.Levels?.Count ?? 0;
+            SkillLevelData levelData = skill.Levels?.Values?
+                .Where(l => l != null)
+                .OrderByDescending(l => l.Level)
+                .FirstOrDefault();
+            int attackCount = levelData?.AttackCount ?? 0;
+            int damage = levelData?.Damage ?? 0;
+            string name = EscapeAutoCaptureCsv(skill.Name);
+            string row = string.Join(",",
+                skill.SkillId,
+                name,
+                skill.Job,
+                skill.IsAttack ? "1" : "0",
+                levelCount,
+                attackCount,
+                damage,
+                EscapeAutoCaptureCsv(reason));
+            _autoCaptureSkillRejectRows.Add(row);
+        }
+
+        private static string EscapeAutoCaptureCsv(string value)
+        {
+            string text = value ?? string.Empty;
+            if (text.Contains(",") || text.Contains("\"") || text.Contains("\r") || text.Contains("\n"))
+            {
+                return "\"" + text.Replace("\"", "\"\"") + "\"";
+            }
+            return text;
         }
 
         private void ExportOrUpdateAutoCaptureSkillCatalog(string catalogPath)

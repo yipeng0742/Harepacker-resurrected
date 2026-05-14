@@ -268,6 +268,7 @@ namespace HaCreator.MapSimulator
                 int yOffset = _autoCaptureRandom?.Next(-8, 9) ?? 0;
                 int emittedForMob = 0;
                 bool emitMiss = ShouldEmitAutoCaptureMiss();
+                AutoCapNativeDamageSkillEntry selectedSkill = PickAutoCapturePointSkill();
 
                 for (int burst = 0; burst < segmentCount; burst++)
                 {
@@ -298,6 +299,21 @@ namespace HaCreator.MapSimulator
                             int layerLife = PickAutoCaptureLifetimeMs(_autoCaptureCurrentProfile);
                             combat.AddHitEffect(mob.CurrentX + xOffset + fx, mob.CurrentY - 24 + yOffset + fy, layerTick, PickAutoCaptureHitVariation(), _autoCaptureRandom?.NextDouble() > 0.5, layerTint, layerScale, layerLife);
                         }
+                    }
+
+                    if (!emitMiss && selectedSkill?.CachedHitEffect != null && _autoCaptureRealSkillEffectControl?.Enabled == true)
+                    {
+                        bool flip = _autoCaptureRandom?.NextDouble() > 0.5;
+                        float scale = Math.Max(0.5f, PickAutoCaptureScale(_autoCaptureCurrentProfile));
+                        combat.AddSkillHitEffect(
+                            mob.CurrentX + xOffset,
+                            mob.CurrentY - 24f + yOffset,
+                            eventTick + segmentOffset,
+                            selectedSkill.CachedHitEffect,
+                            flip,
+                            Color.White,
+                            scale);
+                        _autoCaptureRealSkillEffectTriggerCount++;
                     }
 
                     int comboIndex = burst % 6;
@@ -333,6 +349,21 @@ namespace HaCreator.MapSimulator
                     emitted++;
                 }
             }
+        }
+
+        private AutoCapNativeDamageSkillEntry PickAutoCapturePointSkill()
+        {
+            if (_autoCapturePointSkillPool != null && _autoCapturePointSkillPool.Count > 0 && _autoCaptureRandom != null)
+            {
+                return _autoCapturePointSkillPool[_autoCaptureRandom.Next(_autoCapturePointSkillPool.Count)];
+            }
+
+            if (_autoCaptureNativeDamageSkillPool != null && _autoCaptureNativeDamageSkillPool.Count > 0 && _autoCaptureRandom != null)
+            {
+                return _autoCaptureNativeDamageSkillPool[_autoCaptureRandom.Next(_autoCaptureNativeDamageSkillPool.Count)];
+            }
+
+            return null;
         }
 
         private int ResolveDynamicBoundEventFrameLimit(int visibleMobCount)

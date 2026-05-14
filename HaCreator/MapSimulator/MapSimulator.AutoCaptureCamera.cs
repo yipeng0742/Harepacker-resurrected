@@ -115,6 +115,8 @@ namespace HaCreator.MapSimulator
                     return;
                 case AutoCaptureCameraPhase.Sampling:
                 case AutoCaptureCameraPhase.Complete:
+                    HandleAutoCaptureCompletionIfNeeded();
+                    return;
                 default:
                     return;
             }
@@ -131,6 +133,7 @@ namespace HaCreator.MapSimulator
             if (nextPointIndex >= _autoCaptureScanPath.Count)
             {
                 _autoCaptureCameraPhase = AutoCaptureCameraPhase.Complete;
+                HandleAutoCaptureCompletionIfNeeded();
                 return;
             }
 
@@ -161,8 +164,34 @@ namespace HaCreator.MapSimulator
                     _autoCaptureCameraPhase = (_autoCaptureCurrentPointIndex + 1) >= _autoCaptureTotalPointCount
                         ? AutoCaptureCameraPhase.Complete
                         : AutoCaptureCameraPhase.MoveToPoint;
+                    if (_autoCaptureCameraPhase == AutoCaptureCameraPhase.Complete)
+                    {
+                        HandleAutoCaptureCompletionIfNeeded();
+                    }
                 }
             }
+        }
+
+        private void HandleAutoCaptureCompletionIfNeeded()
+        {
+            if (_autoCaptureCameraPhase != AutoCaptureCameraPhase.Complete || _autoCaptureCompletionHandled)
+            {
+                return;
+            }
+
+            _autoCaptureCompletionHandled = true;
+            int capturedFrames = _datasetGenerator?.CapturedFrameCount ?? 0;
+            _autoCaptureLastCompleteLogFrame = capturedFrames;
+            System.Console.WriteLine($"[AutoCap][complete] map={_autoCaptureOptions?.MapId:D9} res={_autoCaptureOptions?.ResolutionName} captured_frames={capturedFrames} expected_frames={_autoCaptureExpectedFrameCount} point_idx={_autoCaptureCurrentPointIndex + 1}/{_autoCaptureTotalPointCount} real_skill_fx_triggers={_autoCaptureRealSkillEffectTriggerCount}");
+            try
+            {
+                _datasetGenerator?.StopGeneration();
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap][complete] stop_generation_failed: {ex.Message}");
+            }
+            this.Exit();
         }
     }
 }

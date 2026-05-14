@@ -15,6 +15,7 @@ namespace HaCreator.MapSimulator
         {
             if (_autoCaptureRealSkillEffectControl == null || !_autoCaptureRealSkillEffectControl.Enabled)
             {
+                System.Console.WriteLine("[AutoCap][real_skill_fx] skipped: disabled");
                 return 0;
             }
 
@@ -69,7 +70,12 @@ namespace HaCreator.MapSimulator
                     if (frames.Count > 0)
                     {
                         _combatEffects.SetHitEffectFrames(kv.Key, frames);
+                        System.Console.WriteLine($"[AutoCap][real_skill_fx] loaded skill_id={kv.Value.skillId} variation={kv.Key} frames={frames.Count}");
                         loadedCount++;
+                    }
+                    else
+                    {
+                        System.Console.WriteLine($"[AutoCap][real_skill_fx] empty_frames skill_id={kv.Value.skillId} variation={kv.Key}");
                     }
                 }
                 catch (Exception ex)
@@ -78,6 +84,7 @@ namespace HaCreator.MapSimulator
                 }
             }
 
+            System.Console.WriteLine($"[AutoCap][real_skill_fx] loaded_framesets={loadedCount}");
             return loadedCount;
         }
 
