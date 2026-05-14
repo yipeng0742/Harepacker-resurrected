@@ -198,11 +198,9 @@ namespace HaCreator.MapSimulator
             {
                 case AutoCaptureDataBucket.CleanBaseline:
                     tuning.DisableDamageNumbers = true;
-                    tuning.DisableHitEffects = true;
                     tuning.DamageLagProbOverride = 0d;
                     break;
                 case AutoCaptureDataBucket.AnchorDecoupling:
-                    tuning.HitExtraLayerMaxClamp = 0;
                     tuning.DamageLagProbOverride = Math.Min(0.08d, _autoCaptureBucketPolicy?.StandMoveDamageLagProb ?? 0.03d);
                     break;
                 case AutoCaptureDataBucket.ChaosOcclusion:

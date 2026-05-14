@@ -279,32 +279,10 @@ namespace HaCreator.MapSimulator
                         break;
                     }
 
-                    if (_autoCaptureHitEffectControl?.Enabled == true)
-                    {
-                        int extraEffects = PickAutoCaptureExtraLayers();
-                        if (tuning?.DisableHitEffects == true)
-                        {
-                            extraEffects = 0;
-                        }
-
-                        int jitterXRange = Math.Max(0, _autoCaptureHitEffectControl.JitterPxX);
-                        int jitterYRange = Math.Max(0, _autoCaptureHitEffectControl.JitterPxY);
-                        for (int i = 0; i < extraEffects; i++)
-                        {
-                            int fx = _autoCaptureRandom?.Next(-jitterXRange, jitterXRange + 1) ?? 0;
-                            int fy = _autoCaptureRandom?.Next(-jitterYRange, jitterYRange + 1) ?? 0;
-                            int layerTick = eventTick + (_autoCaptureRandom?.Next(0, 100) ?? 0);
-                            Color layerTint = PickAutoCaptureHitEffectTint() * (float)PickAutoCaptureAlpha(_autoCaptureCurrentProfile);
-                            float layerScale = PickAutoCaptureScale(_autoCaptureCurrentProfile);
-                            int layerLife = PickAutoCaptureLifetimeMs(_autoCaptureCurrentProfile);
-                            combat.AddHitEffect(mob.CurrentX + xOffset + fx, mob.CurrentY - 24 + yOffset + fy, layerTick, PickAutoCaptureHitVariation(), _autoCaptureRandom?.NextDouble() > 0.5, layerTint, layerScale, layerLife);
-                        }
-                    }
-
                     if (!emitMiss && selectedSkill?.CachedHitEffect != null && _autoCaptureRealSkillEffectControl?.Enabled == true)
                     {
                         bool flip = _autoCaptureRandom?.NextDouble() > 0.5;
-                        float scale = Math.Max(0.5f, PickAutoCaptureScale(_autoCaptureCurrentProfile));
+                        float scale = ResolveRealSkillEffectScale(_autoCaptureCurrentProfile);
                         combat.AddSkillHitEffect(
                             mob.CurrentX + xOffset,
                             mob.CurrentY - 24f + yOffset,
@@ -391,108 +369,35 @@ namespace HaCreator.MapSimulator
             return value;
         }
 
-        private Color PickAutoCaptureHitEffectTint()
-        {
-            var palette = _autoCaptureHitEffectControl?.PaletteMode == AutoCaptureHitEffectPaletteMode.Extended
-                ? AutoCapHitEffectTintPaletteExtended
-                : AutoCapHitEffectTintPaletteBasic;
-            if (_autoCaptureRandom == null || palette == null || palette.Length == 0)
-            {
-                return Color.White;
-            }
-            return palette[_autoCaptureRandom.Next(palette.Length)];
-        }
-
-        private int PickAutoCaptureHitVariation()
+        private float ResolveRealSkillEffectScale(AutoCaptureProfile profile)
         {
             if (_autoCaptureRandom == null)
-            {
-                return 0;
-            }
-            var pool = _autoCaptureHitEffectControl?.VariationPool;
-            if (pool == null || pool.Count == 0)
-            {
-                return _autoCaptureRandom.Next(0, 4);
-            }
-            return pool[_autoCaptureRandom.Next(pool.Count)];
-        }
-
-        private int PickAutoCaptureExtraLayers()
-        {
-            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
-            {
-                return 0;
-            }
-            int min = _autoCaptureHitEffectControl.ExtraLayersMin;
-            int max = _autoCaptureHitEffectControl.ExtraLayersMax;
-            if (max <= min)
-            {
-                return Math.Max(0, min);
-            }
-            return _autoCaptureRandom.Next(min, max + 1);
-        }
-
-        private double PickAutoCaptureAlpha(AutoCaptureProfile profile)
-        {
-            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
-            {
-                return 0.70d;
-            }
-
-            double min = _autoCaptureHitEffectControl.AlphaMin;
-            double max = _autoCaptureHitEffectControl.AlphaMax;
-            if (profile == AutoCaptureProfile.HitOcclusionHeavy)
-            {
-                min = Math.Max(0.20d, min - 0.03d);
-                max = Math.Max(min, Math.Min(1.0d, max - 0.03d));
-            }
-            return min + ((max - min) * _autoCaptureRandom.NextDouble());
-        }
-
-        private float PickAutoCaptureScale(AutoCaptureProfile profile)
-        {
-            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
             {
                 return 1.0f;
             }
 
-            double min = _autoCaptureHitEffectControl.ScaleMin;
-            double max = _autoCaptureHitEffectControl.ScaleMax;
-            if (profile == AutoCaptureProfile.HitOcclusionHeavy)
+            double min = 0.85d;
+            double max = 1.20d;
+            switch (profile)
             {
-                min += 0.02d;
-                max += 0.08d;
+                case AutoCaptureProfile.NormalMove:
+                    min = 0.80d;
+                    max = 1.00d;
+                    break;
+                case AutoCaptureProfile.AttackHeavy:
+                    min = 0.95d;
+                    max = 1.25d;
+                    break;
+                case AutoCaptureProfile.HitOcclusionHeavy:
+                    min = 1.00d;
+                    max = 1.30d;
+                    break;
             }
-            min = Math.Clamp(min, 0.3d, 2.5d);
-            max = Math.Clamp(max, 0.3d, 2.5d);
             if (max < min)
             {
                 (min, max) = (max, min);
             }
             return (float)(min + ((max - min) * _autoCaptureRandom.NextDouble()));
-        }
-
-        private int PickAutoCaptureLifetimeMs(AutoCaptureProfile profile)
-        {
-            if (_autoCaptureRandom == null || _autoCaptureHitEffectControl == null)
-            {
-                return 220;
-            }
-
-            int min = _autoCaptureHitEffectControl.LifetimeMsMin;
-            int max = _autoCaptureHitEffectControl.LifetimeMsMax;
-            if (profile == AutoCaptureProfile.HitOcclusionHeavy)
-            {
-                min = Math.Max(60, min - 10);
-                max = Math.Max(min + 1, max - 20);
-            }
-            min = Math.Clamp(min, 60, 2000);
-            max = Math.Clamp(max, 60, 2000);
-            if (max <= min)
-            {
-                return min;
-            }
-            return _autoCaptureRandom.Next(min, max + 1);
         }
 
         private AutoCapDamageTemplate PickAutoCapDamageTemplate(AutoCaptureProfile profile)

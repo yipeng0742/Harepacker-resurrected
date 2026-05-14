@@ -26,7 +26,6 @@ namespace HaCreator.MapSimulator.Automation
             public BucketMix bucket_mix { get; set; } = new BucketMix();
             public BucketPolicy bucket_policy { get; set; } = new BucketPolicy();
             public DamageNumberControl damage_number_control { get; set; } = new DamageNumberControl();
-            public HitEffectControl hit_effect_control { get; set; } = new HitEffectControl();
             public RealSkillEffectControl real_skill_effect { get; set; } = new RealSkillEffectControl();
             public SkillCatalogControl skill_catalog { get; set; } = new SkillCatalogControl();
             public int seed { get; set; } = 20260505;
@@ -112,24 +111,6 @@ namespace HaCreator.MapSimulator.Automation
             public double attack { get; set; } = 0.12d;
             public double hit { get; set; } = 0.06d;
             public double death { get; set; } = 0.02d;
-        }
-
-        private sealed class HitEffectControl
-        {
-            public bool enabled { get; set; } = true;
-            public string palette_mode { get; set; } = "extended";
-            public double[] alpha_range { get; set; } = new[] { 0.45d, 0.90d };
-            public double[] scale_range { get; set; } = new[] { 0.70d, 1.50d };
-            public int[] lifetime_ms_range { get; set; } = new[] { 120, 360 };
-            public int[] extra_layers_range { get; set; } = new[] { 0, 2 };
-            public JitterPx jitter_px { get; set; } = new JitterPx();
-            public int[] variation_pool { get; set; } = new[] { 0, 1, 2, 3 };
-        }
-
-        private sealed class JitterPx
-        {
-            public int x { get; set; } = 48;
-            public int y { get; set; } = 28;
         }
 
         private sealed class RealSkillEffectControl
@@ -238,14 +219,12 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"  bucket_policy: enforce_dead_mutual_exclusion={bucketPolicy.EnforceDeadMutualExclusion}, stand_move_damage_lag_prob={bucketPolicy.StandMoveDamageLagProb:0.###}, hit_damage_min_prob={bucketPolicy.HitDamageMinProb:0.###}, global_ratio_scope={bucketPolicy.GlobalRatioScope}");
                 AutoCaptureCameraPlan cameraPlan = BuildCameraPlan(job.camera_plan);
                 AutoCaptureDamageNumberControl damageControl = BuildDamageNumberControl(job.damage_number_control);
-                AutoCaptureHitEffectControl hitEffectControl = BuildHitEffectControl(job.hit_effect_control);
                 AutoCaptureRealSkillEffectControl realSkillEffectControl = BuildRealSkillEffectControl(job.real_skill_effect);
                 Console.WriteLine($"  camera_plan  : mode={cameraPlan.Mode}, overlap={cameraPlan.GridOverlapRatioX:0.###}/{cameraPlan.GridOverlapRatioY:0.###}, start={cameraPlan.StartCorner}, traversal={cameraPlan.Traversal}, warmup_frames={cameraPlan.StartupWarmupFrames}, settle_frames={cameraPlan.SettleFrames}, sample_frames_per_point={cameraPlan.SampleFramesPerPoint}");
                 Console.WriteLine("  labels       : class0=mob_dead, class1=mob_active");
                 Console.WriteLine($"  dmg_num_ctrl : global_cd={damageControl.GlobalCooldownMs}ms, per_mob_cd={damageControl.PerMobCooldownMs}ms, per_frame={damageControl.MaxEventsPerCaptureFrame}, active_nums={damageControl.MaxActiveNumbers}, ratio_cap={damageControl.UseMobRatioCap}, mob_ratio={damageControl.MobRatio:0.###}, frame_cap={damageControl.MinEventsPerCaptureFrame}-{damageControl.MaxEventsPerCaptureFrameCap}, enable_miss={damageControl.EnableMiss}, damage_range={damageControl.MinDamage}-{damageControl.MaxDamage}, distribution={damageControl.DamageDistributionMode}");
                 Console.WriteLine($"                 probs(normal/attack/hit/death)={damageControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{damageControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
                 Console.WriteLine($"                 template_style={damageControl.TemplateStyle}, template_weights=single:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Single, 0)},double_tap:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.DoubleTap, 0)},rapid_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.RapidCombo, 0)},stagger_combo:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.StaggerCombo, 0)},finisher:{damageControl.TemplateWeights.GetValueOrDefault(AutoCaptureDamageTemplateKind.Finisher, 0)}");
-                Console.WriteLine($"  hit_effect_ctrl: enabled={hitEffectControl.Enabled}, palette={hitEffectControl.PaletteMode}, alpha={hitEffectControl.AlphaMin:0.##}-{hitEffectControl.AlphaMax:0.##}, scale={hitEffectControl.ScaleMin:0.##}-{hitEffectControl.ScaleMax:0.##}, lifetime={hitEffectControl.LifetimeMsMin}-{hitEffectControl.LifetimeMsMax}ms, layers={hitEffectControl.ExtraLayersMin}-{hitEffectControl.ExtraLayersMax}, jitter={hitEffectControl.JitterPxX}x{hitEffectControl.JitterPxY}, variations=[{string.Join(",", hitEffectControl.VariationPool)}]");
                 Console.WriteLine($"  real_skill_fx : enabled={realSkillEffectControl.Enabled}, source={realSkillEffectControl.Source}, kind={realSkillEffectControl.Kind}");
                 Console.WriteLine($"  skill_catalog : path={skillCatalog.Path}");
                 var writer = job.writer ?? new WriterControl();
@@ -325,7 +304,6 @@ namespace HaCreator.MapSimulator.Automation
                                 BucketMix = bucketMix,
                                 BucketPolicy = bucketPolicy,
                                 DamageNumberControl = damageControl,
-                                HitEffectControl = hitEffectControl,
                                 RealSkillEffect = realSkillEffectControl,
                                 SkillCatalog = skillCatalog
                             };
@@ -722,43 +700,6 @@ namespace HaCreator.MapSimulator.Automation
                     [AutoCaptureProfile.HitOcclusionHeavy] = Math.Clamp(missProb.hit, 0d, 1d),
                     [AutoCaptureProfile.DeathHeavy] = Math.Clamp(missProb.death, 0d, 1d)
                 }
-            }.Normalize();
-        }
-
-        private static AutoCaptureHitEffectControl BuildHitEffectControl(HitEffectControl control)
-        {
-            control ??= new HitEffectControl();
-            AutoCaptureHitEffectPaletteMode paletteMode =
-                string.Equals(control.palette_mode, "basic", StringComparison.OrdinalIgnoreCase)
-                    ? AutoCaptureHitEffectPaletteMode.Basic
-                    : AutoCaptureHitEffectPaletteMode.Extended;
-
-            double alphaMin = control.alpha_range != null && control.alpha_range.Length > 0 ? control.alpha_range[0] : 0.45d;
-            double alphaMax = control.alpha_range != null && control.alpha_range.Length > 1 ? control.alpha_range[1] : 0.90d;
-            double scaleMin = control.scale_range != null && control.scale_range.Length > 0 ? control.scale_range[0] : 0.70d;
-            double scaleMax = control.scale_range != null && control.scale_range.Length > 1 ? control.scale_range[1] : 1.50d;
-            int lifeMin = control.lifetime_ms_range != null && control.lifetime_ms_range.Length > 0 ? control.lifetime_ms_range[0] : 120;
-            int lifeMax = control.lifetime_ms_range != null && control.lifetime_ms_range.Length > 1 ? control.lifetime_ms_range[1] : 360;
-            int layerMin = control.extra_layers_range != null && control.extra_layers_range.Length > 0 ? control.extra_layers_range[0] : 0;
-            int layerMax = control.extra_layers_range != null && control.extra_layers_range.Length > 1 ? control.extra_layers_range[1] : 2;
-            int jitterX = control.jitter_px?.x ?? 48;
-            int jitterY = control.jitter_px?.y ?? 28;
-
-            return new AutoCaptureHitEffectControl
-            {
-                Enabled = control.enabled,
-                PaletteMode = paletteMode,
-                AlphaMin = alphaMin,
-                AlphaMax = alphaMax,
-                ScaleMin = scaleMin,
-                ScaleMax = scaleMax,
-                LifetimeMsMin = lifeMin,
-                LifetimeMsMax = lifeMax,
-                ExtraLayersMin = layerMin,
-                ExtraLayersMax = layerMax,
-                JitterPxX = jitterX,
-                JitterPxY = jitterY,
-                VariationPool = (control.variation_pool ?? new[] { 0, 1, 2, 3 }).ToList()
             }.Normalize();
         }
 

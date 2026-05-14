@@ -114,7 +114,7 @@ if (_datasetGenerator.IsGenerating && _datasetGenerator.ShouldCaptureFrame())
 #### 2.4 Dataset 模式下的 Mob 随机化
 在 `Update` 中，若 `_datasetGenerator.IsGenerating`，对每个 Mob：
 - **随机动画状态**：随机选择 `stand/move/attack/hit/die` 之一，通过 `ForceStateForDataset()` 强制播放
-- **随机命中特效**：以 50% 概率随机偏移位置添加 `AddHitEffect()`，颜色随机
+- **随机命中特效（已过时）**：该阶段曾尝试随机偏移位置添加 `AddHitEffect()`；当前 AutoCap 已完全移除此类程序化命中特效增强
 - **随机 HP 条**：以 50% 概率调用 `OnMobDamaged()` + `RandomizeMobHPBarForDataset()`，产生不同颜色/尺寸的 HP 条
 
 ---
@@ -303,7 +303,7 @@ public Color? CustomHpColor;
 ### 数据增强策略（Dataset 模式特有）
 当 `_datasetGenerator.IsGenerating == true` 时，MapSimulator 每帧自动：
 - 随机强制 Mob 播放不同动画（stand/move/attack/hit/die）
-- 随机在 Mob 附近生成彩色命中特效
+- 历史上曾尝试在 Mob 附近生成程序化命中特效；当前 AutoCap 已移除该增强项
 - 随机显示带有多样化颜色/尺寸的 HP 条
 
 > 目的：在不需要真实战斗的情况下，产生涵盖多种视觉状态的训练样本。

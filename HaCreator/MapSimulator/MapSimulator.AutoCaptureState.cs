@@ -42,7 +42,6 @@ namespace HaCreator.MapSimulator
         private AutoCaptureBucketMix _autoCaptureBucketMix = AutoCaptureBucketMix.CreateDefault();
         private AutoCaptureBucketPolicy _autoCaptureBucketPolicy = AutoCaptureBucketPolicy.CreateDefault();
         private AutoCaptureDamageNumberControl _autoCaptureDamageNumberControl = AutoCaptureDamageNumberControl.CreateDefault();
-        private AutoCaptureHitEffectControl _autoCaptureHitEffectControl = AutoCaptureHitEffectControl.CreateDefault();
         private AutoCaptureRealSkillEffectControl _autoCaptureRealSkillEffectControl = AutoCaptureRealSkillEffectControl.CreateDefault();
         private AutoCaptureSkillCatalogControl _autoCaptureSkillCatalog = AutoCaptureSkillCatalogControl.CreateDefault();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketAttempted = new Dictionary<AutoCaptureDataBucket, int>();
@@ -130,29 +129,6 @@ namespace HaCreator.MapSimulator
         private const int AutoCapViewSafeMarginPx = 80;
         private const int AutoCapClassMobDead = 0;
         private const int AutoCapClassMobActive = 1;
-        private static readonly Color[] AutoCapHitEffectTintPaletteBasic = new[]
-        {
-            new Color(255, 255, 255),
-            new Color(255, 210, 120),
-            new Color(140, 235, 255),
-            new Color(255, 170, 245),
-            new Color(170, 255, 170),
-            new Color(255, 150, 150)
-        };
-        private static readonly Color[] AutoCapHitEffectTintPaletteExtended = new[]
-        {
-            new Color(255, 255, 255),
-            new Color(255, 220, 120),
-            new Color(255, 170, 110),
-            new Color(255, 120, 170),
-            new Color(245, 165, 255),
-            new Color(180, 145, 255),
-            new Color(140, 220, 255),
-            new Color(110, 255, 240),
-            new Color(135, 255, 170),
-            new Color(220, 255, 145)
-        };
-
         private enum AutoCapDamageTemplate
         {
             Single,
@@ -175,11 +151,9 @@ namespace HaCreator.MapSimulator
         {
             public AutoCaptureProfile Profile { get; set; } = AutoCaptureProfile.NormalMove;
             public bool DisableDamageNumbers { get; set; }
-            public bool DisableHitEffects { get; set; }
             public bool SuppressMobLabels { get; set; }
             public double DamageLagProbOverride { get; set; } = -1d;
             public double HitDamageMinProbOverride { get; set; } = -1d;
-            public int HitExtraLayerMaxClamp { get; set; } = -1;
         }
 
     }

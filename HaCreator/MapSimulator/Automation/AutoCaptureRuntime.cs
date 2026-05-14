@@ -59,8 +59,6 @@ namespace HaCreator.MapSimulator.Automation
             CreateDefaultProfileMix();
         public AutoCaptureDamageNumberControl DamageNumberControl { get; set; } =
             AutoCaptureDamageNumberControl.CreateDefault();
-        public AutoCaptureHitEffectControl HitEffectControl { get; set; } =
-            AutoCaptureHitEffectControl.CreateDefault();
         public AutoCaptureRealSkillEffectControl RealSkillEffect { get; set; } =
             AutoCaptureRealSkillEffectControl.CreateDefault();
         public AutoCaptureSkillCatalogControl SkillCatalog { get; set; } =
@@ -106,11 +104,6 @@ namespace HaCreator.MapSimulator.Automation
         public AutoCaptureDamageNumberControl GetNormalizedDamageNumberControl()
         {
             return (DamageNumberControl ?? AutoCaptureDamageNumberControl.CreateDefault()).Normalize();
-        }
-
-        public AutoCaptureHitEffectControl GetNormalizedHitEffectControl()
-        {
-            return (HitEffectControl ?? AutoCaptureHitEffectControl.CreateDefault()).Normalize();
         }
 
         public AutoCaptureRealSkillEffectControl GetNormalizedRealSkillEffectControl()
@@ -432,88 +425,6 @@ namespace HaCreator.MapSimulator.Automation
                 value = CreateDefaultMissProbabilities()[profile];
             }
             return Math.Clamp(value, 0d, 1d);
-        }
-    }
-
-    internal enum AutoCaptureHitEffectPaletteMode
-    {
-        Basic,
-        Extended
-    }
-
-    internal sealed class AutoCaptureHitEffectControl
-    {
-        public bool Enabled { get; set; } = true;
-        public AutoCaptureHitEffectPaletteMode PaletteMode { get; set; } = AutoCaptureHitEffectPaletteMode.Extended;
-        public double AlphaMin { get; set; } = 0.35d;
-        public double AlphaMax { get; set; } = 0.75d;
-        public double ScaleMin { get; set; } = 0.65d;
-        public double ScaleMax { get; set; } = 1.25d;
-        public int LifetimeMsMin { get; set; } = 100;
-        public int LifetimeMsMax { get; set; } = 260;
-        public int ExtraLayersMin { get; set; } = 0;
-        public int ExtraLayersMax { get; set; } = 1;
-        public int JitterPxX { get; set; } = 32;
-        public int JitterPxY { get; set; } = 20;
-        public List<int> VariationPool { get; set; } = new List<int> { 0, 1, 2, 3 };
-
-        public static AutoCaptureHitEffectControl CreateDefault()
-        {
-            return new AutoCaptureHitEffectControl();
-        }
-
-        public AutoCaptureHitEffectControl Normalize()
-        {
-            var normalized = new AutoCaptureHitEffectControl
-            {
-                Enabled = Enabled,
-                PaletteMode = PaletteMode,
-                AlphaMin = Math.Clamp(AlphaMin, 0.05d, 1.00d),
-                AlphaMax = Math.Clamp(AlphaMax, 0.05d, 1.00d),
-                ScaleMin = Math.Clamp(ScaleMin, 0.30d, 2.50d),
-                ScaleMax = Math.Clamp(ScaleMax, 0.30d, 2.50d),
-                LifetimeMsMin = Math.Clamp(LifetimeMsMin, 60, 2000),
-                LifetimeMsMax = Math.Clamp(LifetimeMsMax, 60, 2000),
-                ExtraLayersMin = Math.Clamp(ExtraLayersMin, 0, 6),
-                ExtraLayersMax = Math.Clamp(ExtraLayersMax, 0, 6),
-                JitterPxX = Math.Clamp(JitterPxX, 0, 300),
-                JitterPxY = Math.Clamp(JitterPxY, 0, 300),
-                VariationPool = new List<int>()
-            };
-
-            if (normalized.AlphaMin > normalized.AlphaMax)
-            {
-                (normalized.AlphaMin, normalized.AlphaMax) = (normalized.AlphaMax, normalized.AlphaMin);
-            }
-            if (normalized.ScaleMin > normalized.ScaleMax)
-            {
-                (normalized.ScaleMin, normalized.ScaleMax) = (normalized.ScaleMax, normalized.ScaleMin);
-            }
-            if (normalized.LifetimeMsMin > normalized.LifetimeMsMax)
-            {
-                (normalized.LifetimeMsMin, normalized.LifetimeMsMax) = (normalized.LifetimeMsMax, normalized.LifetimeMsMin);
-            }
-            if (normalized.ExtraLayersMin > normalized.ExtraLayersMax)
-            {
-                (normalized.ExtraLayersMin, normalized.ExtraLayersMax) = (normalized.ExtraLayersMax, normalized.ExtraLayersMin);
-            }
-
-            if (VariationPool != null)
-            {
-                foreach (int v in VariationPool)
-                {
-                    if (v >= 0 && v <= 16)
-                    {
-                        normalized.VariationPool.Add(v);
-                    }
-                }
-            }
-            if (normalized.VariationPool.Count == 0)
-            {
-                normalized.VariationPool.AddRange(new[] { 0, 1, 2, 3 });
-            }
-            normalized.VariationPool = normalized.VariationPool.Distinct().ToList();
-            return normalized;
         }
     }
 
