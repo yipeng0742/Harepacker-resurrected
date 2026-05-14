@@ -299,6 +299,12 @@ namespace HaCreator.MapSimulator.Character.Skills
         // Action
         public string ActionName { get; set; }       // Animation action to play
 
+        // AutoCap debug metadata
+        public string AutoCapRejectHintCode { get; set; }
+        public string AutoCapRejectHintDetail { get; set; }
+        public bool AutoCapHasActionNode { get; set; }
+        public bool AutoCapHasBallNode { get; set; }
+
         /// <summary>
         /// Get data for a specific level
         /// </summary>

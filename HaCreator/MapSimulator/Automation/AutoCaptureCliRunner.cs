@@ -538,6 +538,9 @@ namespace HaCreator.MapSimulator.Automation
             {
                 "AutoCapSkillManifest.md",
                 "AutoCapSkillRejectSummary.md",
+                "AutoCapAcceptedSkills.csv",
+                "AutoCapRejectedSkills.csv",
+                "AutoCapRejectedSkillsByReason.md",
                 "AutoCapCaptureSummary.md"
             };
 

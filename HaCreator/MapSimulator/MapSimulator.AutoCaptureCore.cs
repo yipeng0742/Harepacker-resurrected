@@ -77,8 +77,11 @@ namespace HaCreator.MapSimulator
             _autoCaptureDmgLastTickByMob.Clear();
             _autoCapturePointSkillPool.Clear();
             _autoCaptureSkillRejectRecords.Clear();
+            _autoCaptureSkillDuplicateRecords.Clear();
             _autoCaptureSkillScannedCount = 0;
             _autoCaptureSkillParseErrorCount = 0;
+            _autoCaptureSkillUniqueNodeCount = 0;
+            _autoCaptureSkillDuplicateNodeCount = 0;
             _autoCaptureSkillBuiltCount = 0;
             _autoCaptureSkillWithEffectCount = 0;
             _autoCaptureBucketAttempted.Clear();
@@ -208,6 +211,9 @@ namespace HaCreator.MapSimulator
             string catalogPath = ResolveAutoCaptureSkillCatalogPath();
             ExportAutoCaptureSkillManifest();
             ExportAutoCaptureSkillRejectSummary();
+            ExportAutoCaptureAcceptedSkillList();
+            ExportAutoCaptureRejectedSkillList();
+            ExportAutoCaptureRejectedSkillMarkdown();
             ExportOrUpdateAutoCaptureSkillCatalog(catalogPath);
             System.Console.WriteLine($"[AutoCap][native_dmg_pool] source={skillSource} scanned={scannedSkillNodes} built={builtCount} with_hit_effect={withEffectCount} total_skills={allSkills.Count} timing_source=flexible catalog_path={catalogPath} reject_not_attack={rejectedAttack} reject_no_levels={rejectedNoLevels} reject_attack_count={rejectedAttackCount} reject_damage={rejectedDamage} reject_timings={rejectedTimings}");
 
@@ -316,40 +322,77 @@ namespace HaCreator.MapSimulator
                     return;
                 }
 
-                string mapId = _autoCaptureOptions?.MapId.ToString("D9") ?? "unknown";
-                string resolutionName = _autoCaptureOptions?.ResolutionName ?? "unknown";
-                var manifestLines = new List<string>
+                int parsedSkillCount = _autoCaptureSkillUniqueNodeCount - _autoCaptureSkillParseErrorCount;
+                int rejectedNotAttack = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "not_attack", StringComparison.Ordinal));
+                int parsedAttackCount = parsedSkillCount - rejectedNotAttack;
+                int acceptedWithoutHit = Math.Max(0, _autoCaptureSkillBuiltCount - _autoCaptureSkillWithEffectCount);
+
+                var lines = new List<string>
                 {
-                    $"## 地图 {mapId} / 分辨率 {resolutionName}",
+                    "## \u6280\u80fd\u6c60\u603b\u89c8",
                     "",
-                    $"- 技能数：{_autoCaptureNativeDamageSkillPool.Count}",
+                    $"- \u626b\u63cf\u6280\u80fd\u8282\u70b9\uff1a{_autoCaptureSkillScannedCount}",
+                    $"- \u53bb\u91cd\u540e\u552f\u4e00 skillId\uff1a{_autoCaptureSkillUniqueNodeCount}",
+                    $"- \u91cd\u590d\u8282\u70b9\u6570\uff1a{_autoCaptureSkillDuplicateNodeCount}",
+                    $"- \u89e3\u6790\u6210\u529f\u6280\u80fd\uff1a{parsedSkillCount}",
+                    $"- \u89e3\u6790\u5f02\u5e38\u6570\uff1a{_autoCaptureSkillParseErrorCount}",
+                    $"- \u975e\u653b\u51fb\u6280\u80fd\u6392\u9664\uff1a{rejectedNotAttack}",
+                    $"- \u653b\u51fb\u6280\u80fd\u5019\u9009\uff1a{parsedAttackCount}",
+                    $"- \u6700\u7ec8\u5165\u6c60\u6280\u80fd\u6570\uff1a{_autoCaptureSkillBuiltCount}",
+                    $"- \u5176\u4e2d\u5e26 hit \u7279\u6548\u6280\u80fd\u6570\uff1a{_autoCaptureSkillWithEffectCount}",
+                    $"- \u65e0 hit \u7279\u6548\u4f46\u4ecd\u53ef\u7528\u6280\u80fd\u6570\uff1a{acceptedWithoutHit}",
                     "",
-                    "| Skill ID | Chinese Name | Job ID | Family | Occlusion | AttackCount | Damage |",
-                    "| :--- | :--- | :--- | :--- | :--- | :--- | :--- |"
+                    "## \u5165\u6c60\u6280\u80fd\u6e05\u5355",
+                    "",
+                    "| Skill ID | \u6280\u80fd\u540d | Job | \u6bb5\u6570 | \u4f24\u5bb3 | \u66b4\u51fb\u7387 | \u547d\u4e2d\u7279\u6548 | \u89c6\u89c9\u65cf | \u906e\u6321\u7ea7\u522b |",
+                    "| ---: | :--- | ---: | ---: | ---: | ---: | :---: | :--- | :--- |"
                 };
 
-                var sortedPool = _autoCaptureNativeDamageSkillPool.OrderBy(s => s.SkillId).ToList();
-                foreach (var entry in sortedPool)
+                foreach (var entry in _autoCaptureNativeDamageSkillPool.OrderBy(s => s.SkillId))
                 {
-                    string skillIdStr = entry.SkillId.ToString();
-                    string skillName = "Unknown Name";
-                    if (Program.InfoManager.SkillNameCache.TryGetValue(skillIdStr, out var nameTuple))
-                    {
-                        skillName = nameTuple.Item1;
-                    }
-                    manifestLines.Add($"| {entry.SkillId} | {skillName} | {entry.Job} | {entry.VisualFamily} | {entry.OcclusionLevel} | {entry.AttackCount} | {entry.DamagePercent} |");
+                    string skillName = GetAutoCaptureSkillDisplayName(entry.SkillId, entry.Name);
+                    lines.Add($"| {entry.SkillId} | {skillName} | {entry.Job} | {entry.AttackCount} | {entry.DamagePercent} | {entry.CriticalRatePercent} | {(entry.CachedHitEffect != null ? "\u6709" : "\u65e0")} | {entry.VisualFamily} | {entry.OcclusionLevel} |");
                 }
 
-                AppendAutoCaptureMarkdownSummary(
-                    "AutoCapSkillManifest.md",
-                    "# AutoCapture Skill Manifest",
-                    string.Join(Environment.NewLine, manifestLines));
+                var noHitSkills = _autoCaptureNativeDamageSkillPool.Where(s => s.CachedHitEffect == null).OrderBy(s => s.SkillId).ToList();
+                if (noHitSkills.Count > 0)
+                {
+                    lines.Add("");
+                    lines.Add("## \u65e0 hit \u7279\u6548\u4f46\u4ecd\u4fdd\u7559");
+                    lines.Add("");
+                    foreach (var entry in noHitSkills)
+                    {
+                        string skillName = GetAutoCaptureSkillDisplayName(entry.SkillId, entry.Name);
+                        lines.Add($"- {entry.SkillId} {skillName} | job={entry.Job} | \u4ecd\u4fdd\u7559\u539f\u56e0\uff1a\u653b\u51fb\u6bb5\u6570\u3001\u4f24\u5bb3\u503c\u3001\u6bb5\u65f6\u5e8f\u5747\u6709\u6548\uff0c\u4ec5\u7f3a\u5c11 hit \u7279\u6548\u8d44\u6e90\u3002");
+                    }
+                }
+
+                var duplicateGroups = _autoCaptureSkillDuplicateRecords.GroupBy(r => r.SkillId).OrderBy(g => g.Key).ToList();
+                if (duplicateGroups.Count > 0)
+                {
+                    lines.Add("");
+                    lines.Add("## \u91cd\u590d skill \u8282\u70b9");
+                    lines.Add("");
+                    lines.Add("| Skill ID | \u6280\u80fd\u540d | \u9996\u6b21\u6765\u6e90 Job | \u91cd\u590d\u6765\u6e90 Job |");
+                    lines.Add("| ---: | :--- | ---: | :--- |");
+                    foreach (var group in duplicateGroups)
+                    {
+                        AutoCaptureSkillDuplicateRecord first = group.First();
+                        string skillName = GetAutoCaptureSkillDisplayName(first.SkillId, first.Name);
+                        string duplicateJobs = string.Join(" / ", group.Select(r => r.DuplicateJob).Distinct().OrderBy(v => v));
+                        lines.Add($"| {first.SkillId} | {skillName} | {first.FirstJob} | {duplicateJobs} |");
+                    }
+                }
+
+                File.WriteAllLines(manifestPath, BuildMarkdownDocument("AutoCap \u6280\u80fd\u6c60\u603b\u8868", lines), new UTF8Encoding(true));
             }
             catch (Exception ex)
             {
                 System.Console.WriteLine($"[AutoCap] Failed to export skill manifest: {ex.Message}");
             }
         }
+
+
 
         private void ExportAutoCaptureSkillRejects()
         {
@@ -387,7 +430,11 @@ namespace HaCreator.MapSimulator
                 LevelCount = levelCount,
                 AttackCount = levelData?.AttackCount ?? 0,
                 Damage = levelData?.Damage ?? 0,
-                ReasonCode = reason
+                ReasonCode = reason,
+                ReasonDetail = BuildAutoCaptureSkillRejectRecordDetail(skill, reason, levelData),
+                HasHitEffect = skill.HitEffect != null,
+                HasActionNode = skill.AutoCapHasActionNode,
+                HasBallNode = skill.AutoCapHasBallNode
             });
         }
 
@@ -664,75 +711,73 @@ namespace HaCreator.MapSimulator
                     return;
                 }
 
-                string mapId = _autoCaptureOptions?.MapId.ToString("D9") ?? "unknown";
-                string resolutionName = _autoCaptureOptions?.ResolutionName ?? "unknown";
-                int rejectedCount = _autoCaptureSkillRejectRecords.Count;
-                int parsedSkillCount = _autoCaptureSkillScannedCount - _autoCaptureSkillParseErrorCount;
+                int parsedSkillCount = _autoCaptureSkillUniqueNodeCount - _autoCaptureSkillParseErrorCount;
                 int rejectedNotAttack = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "not_attack", StringComparison.Ordinal));
                 int rejectedNoLevels = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "no_levels", StringComparison.Ordinal));
                 int rejectedAttackCount = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "attack_count", StringComparison.Ordinal));
                 int rejectedDamage = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "damage", StringComparison.Ordinal));
                 int rejectedTimings = _autoCaptureSkillRejectRecords.Count(r => string.Equals(r.ReasonCode, "timings", StringComparison.Ordinal));
                 int parsedAttackCount = parsedSkillCount - rejectedNotAttack;
-                var reasonGroups = _autoCaptureSkillRejectRecords
-                    .GroupBy(r => GetAutoCaptureSkillRejectReasonTextSafe(r.ReasonCode))
-                    .OrderByDescending(g => g.Count())
-                    .ThenBy(g => g.Key, StringComparer.Ordinal);
 
                 var lines = new List<string>
                 {
-                    $"## 地图 {mapId} / 分辨率 {resolutionName}",
+                    "## \u6f0f\u6597\u7edf\u8ba1",
                     "",
-                    "### 技能漏斗",
-                    "",
-                    $"- 扫描技能节点：{_autoCaptureSkillScannedCount}",
-                    $"- 解析成功技能：{parsedSkillCount}",
-                    $"- 解析异常数：{_autoCaptureSkillParseErrorCount}",
-                    $"- 非攻击技能排除：{rejectedNotAttack}",
-                    $"- 攻击技能候选：{parsedAttackCount}",
-                    $"- 因缺少等级数据排除：{rejectedNoLevels}",
-                    $"- 因攻击段数无效排除：{rejectedAttackCount}",
-                    $"- 因伤害值无效排除：{rejectedDamage}",
-                    $"- 因段时序缺失排除：{rejectedTimings}",
-                    $"- 最终入池技能数：{_autoCaptureSkillBuiltCount}",
-                    $"- 其中带 hit 特效技能数：{_autoCaptureSkillWithEffectCount}",
-                    $"- 无 hit 特效但仍可用技能数：{Math.Max(0, _autoCaptureSkillBuiltCount - _autoCaptureSkillWithEffectCount)}",
+                    $"- \u626b\u63cf\u6280\u80fd\u8282\u70b9\uff1a{_autoCaptureSkillScannedCount}",
+                    $"- \u53bb\u91cd\u540e\u552f\u4e00 skillId\uff1a{_autoCaptureSkillUniqueNodeCount}",
+                    $"- \u91cd\u590d\u8282\u70b9\u6570\uff1a{_autoCaptureSkillDuplicateNodeCount}",
+                    $"- \u89e3\u6790\u6210\u529f\u6280\u80fd\uff1a{parsedSkillCount}",
+                    $"- \u89e3\u6790\u5f02\u5e38\u6570\uff1a{_autoCaptureSkillParseErrorCount}",
+                    $"- \u975e\u653b\u51fb\u6280\u80fd\u6392\u9664\uff1a{rejectedNotAttack}",
+                    $"- \u653b\u51fb\u6280\u80fd\u5019\u9009\uff1a{parsedAttackCount}",
+                    $"- \u56e0\u7f3a\u5c11\u7b49\u7ea7\u6570\u636e\u6392\u9664\uff1a{rejectedNoLevels}",
+                    $"- \u56e0\u653b\u51fb\u6bb5\u6570\u65e0\u6548\u6392\u9664\uff1a{rejectedAttackCount}",
+                    $"- \u56e0\u4f24\u5bb3\u503c\u65e0\u6548\u6392\u9664\uff1a{rejectedDamage}",
+                    $"- \u56e0\u6bb5\u65f6\u5e8f\u7f3a\u5931\u6392\u9664\uff1a{rejectedTimings}",
+                    $"- \u6700\u7ec8\u5165\u6c60\u6280\u80fd\u6570\uff1a{_autoCaptureSkillBuiltCount}",
+                    $"- \u5176\u4e2d\u5e26 hit \u7279\u6548\u6280\u80fd\u6570\uff1a{_autoCaptureSkillWithEffectCount}",
+                    $"- \u65e0 hit \u7279\u6548\u4f46\u4ecd\u53ef\u7528\u6280\u80fd\u6570\uff1a{Math.Max(0, _autoCaptureSkillBuiltCount - _autoCaptureSkillWithEffectCount)}",
                     ""
                 };
 
-                if (rejectedCount == 0)
+                if (_autoCaptureSkillDuplicateRecords.Count > 0)
                 {
-                    lines.Add("- 本图没有任何技能被规则筛除。");
+                    lines.Add("## 607 \u5230 590\uff1a\u91cd\u590d skill \u8282\u70b9");
+                    lines.Add("");
+                    lines.Add("| Skill ID | \u6280\u80fd\u540d | \u9996\u6b21\u6765\u6e90 Job | \u91cd\u590d\u6765\u6e90 Job |");
+                    lines.Add("| ---: | :--- | ---: | :--- |");
+                    foreach (var group in _autoCaptureSkillDuplicateRecords.GroupBy(r => r.SkillId).OrderBy(g => g.Key))
+                    {
+                        AutoCaptureSkillDuplicateRecord first = group.First();
+                        string skillName = GetAutoCaptureSkillDisplayName(first.SkillId, first.Name);
+                        string duplicateJobs = string.Join(" / ", group.Select(r => r.DuplicateJob).Distinct().OrderBy(v => v));
+                        lines.Add($"| {first.SkillId} | {skillName} | {first.FirstJob} | {duplicateJobs} |");
+                    }
+                    lines.Add("");
+                }
+
+                if (_autoCaptureSkillRejectRecords.Count == 0)
+                {
+                    lines.Add("## 590 \u5230 52\uff1a\u65e0\u7b5b\u9664\u9879");
+                    lines.Add("");
+                    lines.Add("- \u672c\u6b21\u6ca1\u6709\u6280\u80fd\u88ab\u7b5b\u9664\u3002");
                 }
                 else
                 {
-                    lines.Add("### 原因统计");
+                    lines.Add("## 590 \u5230 52\uff1a\u7b5b\u9664\u539f\u56e0\u5206\u7ec4");
                     lines.Add("");
-                    lines.Add("| 原因 | 数量 |");
+                    lines.Add("| \u539f\u56e0 | \u6570\u91cf |");
                     lines.Add("| :--- | ---: |");
-                    foreach (var group in reasonGroups)
+                    foreach (var group in _autoCaptureSkillRejectRecords
+                        .GroupBy(r => GetAutoCaptureSkillRejectReasonTextSafe(r.ReasonCode))
+                        .OrderByDescending(g => g.Count())
+                        .ThenBy(g => g.Key, StringComparer.Ordinal))
                     {
                         lines.Add($"| {group.Key} | {group.Count()} |");
                     }
-
-                    lines.Add("");
-                    lines.Add("### 代表样例");
-                    lines.Add("");
-                    lines.Add("| 原因 | Skill ID | 名称 | Job | 说明 |");
-                    lines.Add("| :--- | ---: | :--- | ---: | :--- |");
-
-                    foreach (var group in reasonGroups)
-                    {
-                        AutoCaptureSkillRejectRecord sample = group.OrderBy(r => r.SkillId).First();
-                        string sampleName = string.IsNullOrWhiteSpace(sample.Name) ? "未命名" : sample.Name;
-                        lines.Add($"| {group.Key} | {sample.SkillId} | {sampleName} | {sample.Job} | {BuildAutoCaptureSkillRejectDetail(sample)} |");
-                    }
                 }
 
-                AppendAutoCaptureMarkdownSummary(
-                    "AutoCapSkillRejectSummary.md",
-                    "# AutoCapture Skill Reject Summary",
-                    string.Join(Environment.NewLine, lines));
+                File.WriteAllLines(summaryPath, BuildMarkdownDocument("AutoCap \u6280\u80fd\u7b5b\u9009\u6458\u8981", lines), new UTF8Encoding(true));
             }
             catch (Exception ex)
             {
@@ -740,47 +785,254 @@ namespace HaCreator.MapSimulator
             }
         }
 
+
+
         private static string GetAutoCaptureSkillRejectReasonTextSafe(string reason)
         {
-            switch (reason)
+            if (string.Equals(reason, "not_attack", StringComparison.Ordinal))
             {
-                case "not_attack":
-                    return "非攻击技能";
-                case "no_levels":
-                    return "缺少等级数据";
-                case "attack_count":
-                    return "攻击段数无效";
-                case "damage":
-                    return "伤害值无效";
-                case "timings":
-                    return "段时序缺失";
-                default:
-                    return string.IsNullOrWhiteSpace(reason) ? "未说明" : reason;
+                return "\u4e0d\u662f\u653b\u51fb\u6280\u80fd";
             }
+            if (string.Equals(reason, "no_levels", StringComparison.Ordinal))
+            {
+                return "\u7f3a\u5c11\u7b49\u7ea7\u6570\u636e";
+            }
+            if (string.Equals(reason, "attack_count", StringComparison.Ordinal))
+            {
+                return "\u653b\u51fb\u6bb5\u6570\u65e0\u6548";
+            }
+            if (string.Equals(reason, "damage", StringComparison.Ordinal))
+            {
+                return "\u4f24\u5bb3\u503c\u65e0\u6548";
+            }
+            if (string.Equals(reason, "timings", StringComparison.Ordinal))
+            {
+                return "\u6bb5\u65f6\u5e8f\u7f3a\u5931";
+            }
+
+            return string.IsNullOrWhiteSpace(reason) ? "\u672a\u8bf4\u660e\u539f\u56e0" : reason;
         }
+
+
 
         private static string BuildAutoCaptureSkillRejectDetail(AutoCaptureSkillRejectRecord record)
         {
             if (record == null)
             {
+                return "\u65e0";
+            }
+
+            if (!string.IsNullOrWhiteSpace(record.ReasonDetail))
+            {
+                return record.ReasonDetail;
+            }
+
+            return "\u65e0";
+        }
+
+
+
+        private void ExportAutoCaptureAcceptedSkillList()
+        {
+            try
+            {
+                string path = Path.Combine(GetAutoCaptureSummaryRootDir(), "AutoCapAcceptedSkills.csv");
+                if (File.Exists(path))
+                {
+                    return;
+                }
+
+                var lines = new List<string>
+                {
+                    "\u6280\u80fdID,\u6280\u80fd\u540d,Job,\u653b\u51fb\u6bb5\u6570,\u4f24\u5bb3\u503c,\u66b4\u51fb\u7387,\u547d\u4e2d\u7279\u6548,\u89c6\u89c9\u65cf,\u906e\u6321\u7ea7\u522b"
+                };
+
+                foreach (var entry in _autoCaptureNativeDamageSkillPool.OrderBy(s => s.SkillId))
+                {
+                    string skillName = GetAutoCaptureSkillDisplayName(entry.SkillId, entry.Name);
+                    lines.Add(string.Join(",",
+                        entry.SkillId,
+                        EscapeCsvField(skillName),
+                        entry.Job,
+                        entry.AttackCount,
+                        entry.DamagePercent,
+                        entry.CriticalRatePercent,
+                        EscapeCsvField(entry.CachedHitEffect != null ? "\u6709" : "\u65e0"),
+                        EscapeCsvField(entry.VisualFamily),
+                        EscapeCsvField(entry.OcclusionLevel)));
+                }
+
+                File.WriteAllLines(path, lines, new UTF8Encoding(true));
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap] Failed to export accepted skill list: {ex.Message}");
+            }
+        }
+
+
+
+        private void ExportAutoCaptureRejectedSkillList()
+        {
+            try
+            {
+                string path = Path.Combine(GetAutoCaptureSummaryRootDir(), "AutoCapRejectedSkills.csv");
+                if (File.Exists(path))
+                {
+                    return;
+                }
+
+                var lines = new List<string>
+                {
+                    "\u6280\u80fdID,\u6280\u80fd\u540d,Job,\u662f\u5426\u653b\u51fb\u6280\u80fd,\u7b49\u7ea7\u6570,\u653b\u51fb\u6bb5\u6570,\u4f24\u5bb3\u503c,\u547d\u4e2d\u7279\u6548,\u7b5b\u9664\u539f\u56e0,\u539f\u56e0\u8bf4\u660e"
+                };
+
+                foreach (var record in _autoCaptureSkillRejectRecords.OrderBy(r => r.SkillId))
+                {
+                    string skillName = string.IsNullOrWhiteSpace(record.Name)
+                        ? GetAutoCaptureSkillDisplayName(record.SkillId, null)
+                        : record.Name;
+                    lines.Add(string.Join(",",
+                        record.SkillId,
+                        EscapeCsvField(skillName),
+                        record.Job,
+                        EscapeCsvField(record.IsAttack ? "\u662f" : "\u5426"),
+                        record.LevelCount,
+                        record.AttackCount,
+                        record.Damage,
+                        EscapeCsvField(record.HasHitEffect ? "\u6709" : "\u65e0"),
+                        EscapeCsvField(GetAutoCaptureSkillRejectReasonTextSafe(record.ReasonCode)),
+                        EscapeCsvField(BuildAutoCaptureSkillRejectDetail(record))));
+                }
+
+                File.WriteAllLines(path, lines, new UTF8Encoding(true));
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap] Failed to export rejected skill list: {ex.Message}");
+            }
+        }
+
+
+
+        private void ExportAutoCaptureRejectedSkillMarkdown()
+        {
+            try
+            {
+                string path = Path.Combine(GetAutoCaptureSummaryRootDir(), "AutoCapRejectedSkillsByReason.md");
+                if (File.Exists(path))
+                {
+                    return;
+                }
+
+                var lines = new List<string>();
+                if (_autoCaptureSkillRejectRecords.Count == 0)
+                {
+                    lines.Add("## \u672c\u6b21\u6ca1\u6709\u88ab\u7b5b\u9664\u7684\u6280\u80fd");
+                    lines.Add("");
+                    lines.Add("- \u6240\u6709\u8fdb\u5165\u653b\u51fb\u5019\u9009\u7684\u6280\u80fd\u90fd\u901a\u8fc7\u4e86\u540e\u7eed\u6821\u9a8c\u3002");
+                }
+                else
+                {
+                    foreach (var group in _autoCaptureSkillRejectRecords
+                        .GroupBy(r => GetAutoCaptureSkillRejectReasonTextSafe(r.ReasonCode))
+                        .OrderByDescending(g => g.Count())
+                        .ThenBy(g => g.Key, StringComparer.Ordinal))
+                    {
+                        lines.Add($"## {group.Key}\uff08{group.Count()}\uff09");
+                        lines.Add("");
+                        lines.Add("| Skill ID | \u6280\u80fd\u540d | Job | \u547d\u4e2d\u7279\u6548 | \u539f\u56e0\u8bf4\u660e |");
+                        lines.Add("| ---: | :--- | ---: | :---: | :--- |");
+                        foreach (var record in group.OrderBy(r => r.SkillId))
+                        {
+                            string skillName = string.IsNullOrWhiteSpace(record.Name)
+                                ? GetAutoCaptureSkillDisplayName(record.SkillId, null)
+                                : record.Name;
+                            lines.Add($"| {record.SkillId} | {skillName} | {record.Job} | {(record.HasHitEffect ? "\u6709" : "\u65e0")} | {BuildAutoCaptureSkillRejectDetail(record)} |");
+                        }
+                        lines.Add("");
+                    }
+                }
+
+                File.WriteAllLines(path, BuildMarkdownDocument("AutoCap \u6280\u80fd\u7b5b\u9664\u660e\u7ec6", lines), new UTF8Encoding(true));
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap] Failed to export rejected skill markdown: {ex.Message}");
+            }
+        }
+
+
+
+        private string GetAutoCaptureSkillDisplayName(int skillId, string fallbackName)
+        {
+            if (!string.IsNullOrWhiteSpace(fallbackName))
+            {
+                return fallbackName;
+            }
+
+            if (Program.InfoManager.SkillNameCache.TryGetValue(skillId.ToString(), out var nameTuple) &&
+                !string.IsNullOrWhiteSpace(nameTuple.Item1))
+            {
+                return nameTuple.Item1;
+            }
+
+            return "Unknown Name";
+        }
+
+        private static string BuildAutoCaptureSkillRejectRecordDetail(SkillData skill, string reason, SkillLevelData levelData)
+        {
+            if (skill == null)
+            {
                 return "无";
             }
 
-            switch (record.ReasonCode)
+            if (string.Equals(reason, "not_attack", StringComparison.Ordinal))
             {
-                case "not_attack":
-                    return $"is_attack={(record.IsAttack ? 1 : 0)}";
-                case "no_levels":
-                    return $"level_count={record.LevelCount}";
-                case "attack_count":
-                    return $"attack_count={record.AttackCount}";
-                case "damage":
-                    return $"damage={record.Damage}";
-                case "timings":
-                    return $"attack_count={record.AttackCount}，无法解析段时序";
-                default:
-                    return "无额外说明";
+                if (!string.IsNullOrWhiteSpace(skill.AutoCapRejectHintDetail))
+                {
+                    return skill.AutoCapRejectHintDetail;
+                }
+
+                if (!string.IsNullOrWhiteSpace(skill.AutoCapRejectHintCode))
+                {
+                    return skill.AutoCapRejectHintCode;
+                }
             }
+
+            switch (reason)
+            {
+                case "no_levels":
+                    return $"等级数据为空，level_count={skill.Levels?.Count ?? 0}";
+                case "attack_count":
+                    return $"攻击段数无效，attack_count={levelData?.AttackCount ?? 0}";
+                case "damage":
+                    return $"伤害值无效，damage={levelData?.Damage ?? 0}";
+                case "timings":
+                    return $"攻击段数={levelData?.AttackCount ?? 0}，但未解析到完整段时序";
+                default:
+                    return "无";
+            }
+        }
+
+        private static List<string> BuildMarkdownDocument(string title, IEnumerable<string> bodyLines)
+        {
+            var lines = new List<string> { $"# {title}", "" };
+            if (bodyLines != null)
+            {
+                lines.AddRange(bodyLines);
+            }
+            return lines;
+        }
+
+        private static string EscapeCsvField(string value)
+        {
+            string text = value ?? string.Empty;
+            if (text.Contains(",") || text.Contains("\"") || text.Contains("\r") || text.Contains("\n"))
+            {
+                return "\"" + text.Replace("\"", "\"\"") + "\"";
+            }
+            return text;
         }
 
         private static string InferAutoCaptureSkillOcclusionLevel(SkillData skill, SkillLevelData levelData)
@@ -864,6 +1116,7 @@ namespace HaCreator.MapSimulator
             }
 
             var seenSkillIds = new HashSet<int>();
+            var firstSeenJobBySkillId = new Dictionary<int, int>();
             foreach (var jobImg in skillDir.WzImages)
             {
                 if (jobImg == null || !jobImg.Name.EndsWith(".img"))
@@ -887,6 +1140,14 @@ namespace HaCreator.MapSimulator
                     scannedSkillNodes++;
                     if (seenSkillIds.Contains(skillId))
                     {
+                        _autoCaptureSkillDuplicateNodeCount++;
+                        _autoCaptureSkillDuplicateRecords.Add(new AutoCaptureSkillDuplicateRecord
+                        {
+                            SkillId = skillId,
+                            Name = GetAutoCaptureSkillDisplayName(skillId, null),
+                            FirstJob = firstSeenJobBySkillId.TryGetValue(skillId, out int firstJob) ? firstJob : 0,
+                            DuplicateJob = int.TryParse(jobName, out int duplicateJob) ? duplicateJob : 0
+                        });
                         continue;
                     }
 
@@ -898,6 +1159,8 @@ namespace HaCreator.MapSimulator
                     }
                     result.Add(skill);
                     seenSkillIds.Add(skillId);
+                    firstSeenJobBySkillId[skillId] = skill.Job;
+                    _autoCaptureSkillUniqueNodeCount++;
                 }
             }
 
@@ -959,12 +1222,51 @@ namespace HaCreator.MapSimulator
 
             string[] blacklist = { "被动", "强化", "恢复", "祝福", "护盾", "治疗", "隐身", "复活" };
             bool isBlacklisted = blacklist.Any(word => skillName.Contains(word));
+            skill.Name = skillName;
+            skill.AutoCapHasActionNode = hasAction;
+            skill.AutoCapHasBallNode = hasBall;
             skill.IsAttack = hasAction && (hasHit || hasBall) && !isInvisible && (jobId >= 100 && jobId < 8000) && !isBlacklisted;
+            skill.AutoCapRejectHintCode = null;
+            skill.AutoCapRejectHintDetail = null;
+
+            if (!skill.IsAttack)
+            {
+                if (!hasAction)
+                {
+                    skill.AutoCapRejectHintCode = "missing_action";
+                    skill.AutoCapRejectHintDetail = "缺少 action 节点，无法作为攻击动作播放。";
+                }
+                else if (!hasHit && !hasBall)
+                {
+                    skill.AutoCapRejectHintCode = "missing_hit_or_ball";
+                    skill.AutoCapRejectHintDetail = "同时缺少 hit 和 ball 节点，没有可用攻击表现。";
+                }
+                else if (isInvisible)
+                {
+                    skill.AutoCapRejectHintCode = "invisible";
+                    skill.AutoCapRejectHintDetail = "技能被标记为 invisible，采集时不作为可见攻击技能。";
+                }
+                else if (jobId < 100 || jobId >= 8000)
+                {
+                    skill.AutoCapRejectHintCode = "job_out_of_range";
+                    skill.AutoCapRejectHintDetail = $"Job={jobId} 不在角色主动攻击技能扫描范围内。";
+                }
+                else if (isBlacklisted)
+                {
+                    skill.AutoCapRejectHintCode = "name_blacklist";
+                    skill.AutoCapRejectHintDetail = "技能名命中被动/强化/恢复/祝福/护盾/治疗/隐身/复活黑名单。";
+                }
+            }
 
             if (skill.IsAttack)
             {
                 bool actuallyHasDamage = skill.Levels.Values.Any(v => v != null && v.Damage > 0);
-                if (!actuallyHasDamage) skill.IsAttack = false;
+                if (!actuallyHasDamage)
+                {
+                    skill.IsAttack = false;
+                    skill.AutoCapRejectHintCode = "no_positive_damage";
+                    skill.AutoCapRejectHintDetail = "虽然有攻击表现，但所有等级伤害值都小于等于 0。";
+                }
             }
 
             if (skill.IsAttack)

@@ -50,7 +50,6 @@ namespace HaCreator.MapSimulator
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketSavedSnapshot = new Dictionary<AutoCaptureDataBucket, int>();
         private bool _autoCaptureLastFrameHasForcedHitState = false;
         private bool _autoCaptureLastFrameDamageEventTriggered = false;
-        private string _autoCaptureBucketManifestPath;
         private int _autoCaptureLastProfileLogFrame = -1;
         private AutoCaptureCameraPlan _autoCaptureCameraPlan = AutoCaptureCameraPlan.CreateDefault();
         private AutoCaptureCameraPhase _autoCaptureCameraPhase = AutoCaptureCameraPhase.Init;
@@ -69,8 +68,11 @@ namespace HaCreator.MapSimulator
         private readonly List<AutoCapNativeDamageSkillEntry> _autoCapturePointSkillPool = new List<AutoCapNativeDamageSkillEntry>();
         private readonly List<string> _autoCaptureSkillRejectRows = new List<string>();
         private readonly List<AutoCaptureSkillRejectRecord> _autoCaptureSkillRejectRecords = new List<AutoCaptureSkillRejectRecord>();
+        private readonly List<AutoCaptureSkillDuplicateRecord> _autoCaptureSkillDuplicateRecords = new List<AutoCaptureSkillDuplicateRecord>();
         private int _autoCaptureSkillScannedCount = 0;
         private int _autoCaptureSkillParseErrorCount = 0;
+        private int _autoCaptureSkillUniqueNodeCount = 0;
+        private int _autoCaptureSkillDuplicateNodeCount = 0;
         private int _autoCaptureSkillBuiltCount = 0;
         private int _autoCaptureSkillWithEffectCount = 0;
         private int _autoCapturePointRecipeSeed = 0;
@@ -124,6 +126,18 @@ namespace HaCreator.MapSimulator
             public int AttackCount { get; set; }
             public int Damage { get; set; }
             public string ReasonCode { get; set; }
+            public string ReasonDetail { get; set; }
+            public bool HasHitEffect { get; set; }
+            public bool HasActionNode { get; set; }
+            public bool HasBallNode { get; set; }
+        }
+
+        private sealed class AutoCaptureSkillDuplicateRecord
+        {
+            public int SkillId { get; set; }
+            public string Name { get; set; }
+            public int FirstJob { get; set; }
+            public int DuplicateJob { get; set; }
         }
 
         private int _autoCaptureDmgAttemptedSnapshot = 0;
