@@ -23,6 +23,17 @@ namespace HaCreator.MapSimulator
             return _autoCaptureBucketPolicy?.EnforceDeadMutualExclusion ?? true;
         }
 
+        private bool ShouldSuppressAutoCaptureMobs()
+        {
+            return IsAutoCaptureBackgroundOnly() &&
+                (_autoCaptureBackgroundSampleControl?.SuppressMobs ?? true);
+        }
+
+        private bool IsAutoCaptureBackgroundOnly()
+        {
+            return IsAutoCaptureEnabled && _autoCaptureCurrentProfile == AutoCaptureProfile.BackgroundOnly;
+        }
+
         private bool IsDeadLikeMob(MobItem mob)
         {
             if (mob == null)
@@ -168,6 +179,16 @@ namespace HaCreator.MapSimulator
             }
 
             var combat = _effectManager?.Combat;
+            if (_autoCaptureCurrentProfile == AutoCaptureProfile.BackgroundOnly)
+            {
+                if (_autoCaptureBackgroundSampleControl?.SuppressDamageNumbers == true ||
+                    _autoCaptureBackgroundSampleControl?.SuppressSkillEffects == true)
+                {
+                    combat?.ClearMapState();
+                }
+                return;
+            }
+
             var forceStateMobs = new List<MobItem>();
             var fallbackMobs = new List<MobItem>();
             foreach (var mob in _mobPool.ActiveMobs)
@@ -242,6 +263,11 @@ namespace HaCreator.MapSimulator
 
         private void TryTriggerAutoCaptureDamageNumbers(CombatEffects combat, int tick, List<MobItem> forceStateMobs, List<MobItem> fallbackMobs, AutoCaptureBucketRuntimeTuning tuning)
         {
+            if (tuning?.DisableDamageNumbers == true && tuning?.SuppressSkillEffects == true)
+            {
+                return;
+            }
+
             if (combat == null || _autoCaptureCurrentProfile == AutoCaptureProfile.DeathHeavy)
             {
                 return;
@@ -301,7 +327,10 @@ namespace HaCreator.MapSimulator
                         break;
                     }
 
-                    if (!emitMiss && selectedSkill?.CachedHitEffect != null && _autoCaptureRealSkillEffectControl?.Enabled == true)
+                    if (!emitMiss &&
+                        selectedSkill?.CachedHitEffect != null &&
+                        _autoCaptureRealSkillEffectControl?.Enabled == true &&
+                        tuning?.SuppressSkillEffects != true)
                     {
                         bool flip = _autoCaptureRandom?.NextDouble() > 0.5;
                         float scale = ResolveRealSkillEffectScale(_autoCaptureCurrentProfile);
@@ -317,6 +346,13 @@ namespace HaCreator.MapSimulator
                     }
 
                     int comboIndex = burst % 6;
+                    if (tuning?.DisableDamageNumbers == true)
+                    {
+                        _autoCaptureDmgLastGlobalTick = eventTick;
+                        _autoCaptureDmgLastTickByMob[mob.PoolId] = eventTick;
+                        continue;
+                    }
+
                     if (emitMiss)
                     {
                         combat.AddMiss(mob.CurrentX + xOffset, mob.CurrentY - 24f + yOffset, eventTick + segmentOffset, DamageColorType.Red);

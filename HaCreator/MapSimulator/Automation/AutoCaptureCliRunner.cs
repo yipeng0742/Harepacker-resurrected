@@ -33,6 +33,7 @@ namespace HaCreator.MapSimulator.Automation
             public CaptureProfileMix capture_profile_mix { get; set; } = new CaptureProfileMix();
             public BucketMix bucket_mix { get; set; } = new BucketMix();
             public BucketPolicy bucket_policy { get; set; } = new BucketPolicy();
+            public BackgroundSampleControl background_sample_control { get; set; } = new BackgroundSampleControl();
             public DamageNumberControl damage_number_control { get; set; } = new DamageNumberControl();
             public RealSkillEffectControl real_skill_effect { get; set; } = new RealSkillEffectControl();
             public SkillCatalogControl skill_catalog { get; set; } = new SkillCatalogControl();
@@ -56,10 +57,10 @@ namespace HaCreator.MapSimulator.Automation
 
         private sealed class CaptureProfileMix
         {
-            public int normal_move { get; set; } = 30;
-            public int attack_heavy { get; set; } = 30;
-            public int hit_occlusion_heavy { get; set; } = 25;
-            public int death_heavy { get; set; } = 15;
+            public int normal_move { get; set; } = 45;
+            public int attack_heavy { get; set; } = 35;
+            public int hit_occlusion_heavy { get; set; } = 15;
+            public int death_heavy { get; set; } = 5;
         }
 
         private sealed class BucketMix
@@ -75,6 +76,15 @@ namespace HaCreator.MapSimulator.Automation
             public double stand_move_damage_lag_prob { get; set; } = 0.03d;
             public double hit_damage_min_prob { get; set; } = 0.90d;
             public string global_ratio_scope { get; set; } = "global";
+        }
+
+        private sealed class BackgroundSampleControl
+        {
+            public bool enabled { get; set; } = true;
+            public double target_empty_ratio { get; set; } = 0.15d;
+            public bool suppress_mobs { get; set; } = true;
+            public bool suppress_damage_numbers { get; set; } = true;
+            public bool suppress_skill_effects { get; set; } = true;
         }
 
         private sealed class DamageNumberControl
@@ -220,12 +230,14 @@ namespace HaCreator.MapSimulator.Automation
                 Console.WriteLine($"  resolutions  : {string.Join(", ", jobResolutions)}");
                 Console.WriteLine($"  seed         : {job.seed}");
                 Console.WriteLine($"  mute_audio   : {job.mute_audio}");
-                Console.WriteLine($"  profile_mix  : normal_move={job.capture_profile_mix?.normal_move ?? 30}, attack_heavy={job.capture_profile_mix?.attack_heavy ?? 30}, hit_occlusion_heavy={job.capture_profile_mix?.hit_occlusion_heavy ?? 25}, death_heavy={job.capture_profile_mix?.death_heavy ?? 15}");
+                Console.WriteLine($"  profile_mix  : normal_move={job.capture_profile_mix?.normal_move ?? 45}, attack_heavy={job.capture_profile_mix?.attack_heavy ?? 35}, hit_occlusion_heavy={job.capture_profile_mix?.hit_occlusion_heavy ?? 15}, death_heavy={job.capture_profile_mix?.death_heavy ?? 5}");
                 AutoCaptureBucketMix bucketMix = BuildBucketMix(job.bucket_mix);
                 AutoCaptureBucketPolicy bucketPolicy = BuildBucketPolicy(job.bucket_policy);
+                AutoCaptureBackgroundSampleControl backgroundSampleControl = BuildBackgroundSampleControl(job.background_sample_control);
                 AutoCaptureSkillCatalogControl skillCatalog = BuildSkillCatalogControl(job.skill_catalog);
                 Console.WriteLine($"  bucket_mix   : clean_baseline={bucketMix.CleanBaseline}, anchor_decoupling={bucketMix.AnchorDecoupling}, chaos_occlusion={bucketMix.ChaosOcclusion}");
                 Console.WriteLine($"  bucket_policy: enforce_dead_mutual_exclusion={bucketPolicy.EnforceDeadMutualExclusion}, stand_move_damage_lag_prob={bucketPolicy.StandMoveDamageLagProb:0.###}, hit_damage_min_prob={bucketPolicy.HitDamageMinProb:0.###}, global_ratio_scope={bucketPolicy.GlobalRatioScope}");
+                Console.WriteLine($"  background   : enabled={backgroundSampleControl.Enabled}, target_empty_ratio={backgroundSampleControl.TargetEmptyRatio:0.###}, suppress_mobs={backgroundSampleControl.SuppressMobs}, suppress_damage_numbers={backgroundSampleControl.SuppressDamageNumbers}, suppress_skill_effects={backgroundSampleControl.SuppressSkillEffects}");
                 AutoCaptureCameraPlan cameraPlan = BuildCameraPlan(job.camera_plan);
                 AutoCaptureDamageNumberControl damageControl = BuildDamageNumberControl(job.damage_number_control);
                 AutoCaptureRealSkillEffectControl realSkillEffectControl = BuildRealSkillEffectControl(job.real_skill_effect);
@@ -321,6 +333,7 @@ namespace HaCreator.MapSimulator.Automation
                                 CaptureProfileMix = BuildProfileMix(job.capture_profile_mix),
                                 BucketMix = bucketMix,
                                 BucketPolicy = bucketPolicy,
+                                BackgroundSampleControl = backgroundSampleControl,
                                 DamageNumberControl = damageControl,
                                 RealSkillEffect = realSkillEffectControl,
                                 SkillCatalog = skillCatalog
@@ -746,6 +759,19 @@ namespace HaCreator.MapSimulator.Automation
             }.Normalize();
         }
 
+        private static AutoCaptureBackgroundSampleControl BuildBackgroundSampleControl(BackgroundSampleControl control)
+        {
+            control ??= new BackgroundSampleControl();
+            return new AutoCaptureBackgroundSampleControl
+            {
+                Enabled = control.enabled,
+                TargetEmptyRatio = Math.Clamp(control.target_empty_ratio, 0d, 0.95d),
+                SuppressMobs = control.suppress_mobs,
+                SuppressDamageNumbers = control.suppress_damage_numbers,
+                SuppressSkillEffects = control.suppress_skill_effects
+            }.Normalize();
+        }
+
         private static AutoCaptureCameraPlan BuildCameraPlan(CameraPlan plan)
         {
             plan ??= new CameraPlan();
@@ -806,14 +832,16 @@ namespace HaCreator.MapSimulator.Automation
                     [AutoCaptureProfile.NormalMove] = Math.Clamp(prob.normal, 0d, 1d),
                     [AutoCaptureProfile.AttackHeavy] = Math.Clamp(prob.attack, 0d, 1d),
                     [AutoCaptureProfile.HitOcclusionHeavy] = Math.Clamp(prob.hit, 0d, 1d),
-                    [AutoCaptureProfile.DeathHeavy] = Math.Clamp(prob.death, 0d, 1d)
+                    [AutoCaptureProfile.DeathHeavy] = Math.Clamp(prob.death, 0d, 1d),
+                    [AutoCaptureProfile.BackgroundOnly] = 0d
                 },
                 MissProbByProfile = new Dictionary<AutoCaptureProfile, double>
                 {
                     [AutoCaptureProfile.NormalMove] = Math.Clamp(missProb.normal, 0d, 1d),
                     [AutoCaptureProfile.AttackHeavy] = Math.Clamp(missProb.attack, 0d, 1d),
                     [AutoCaptureProfile.HitOcclusionHeavy] = Math.Clamp(missProb.hit, 0d, 1d),
-                    [AutoCaptureProfile.DeathHeavy] = Math.Clamp(missProb.death, 0d, 1d)
+                    [AutoCaptureProfile.DeathHeavy] = Math.Clamp(missProb.death, 0d, 1d),
+                    [AutoCaptureProfile.BackgroundOnly] = 0d
                 }
             }.Normalize();
         }

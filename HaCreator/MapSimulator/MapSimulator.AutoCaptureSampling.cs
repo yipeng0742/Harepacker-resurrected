@@ -53,8 +53,33 @@ namespace HaCreator.MapSimulator
                 AutoCaptureDataBucket.CleanBaseline => "A",
                 AutoCaptureDataBucket.AnchorDecoupling => "B",
                 AutoCaptureDataBucket.ChaosOcclusion => "C",
+                AutoCaptureDataBucket.BackgroundOnly => "D",
                 _ => "A"
             };
+        }
+
+        private bool ShouldUseBackgroundOnlyPass()
+        {
+            if (!IsAutoCaptureEnabled || _autoCaptureBackgroundSampleControl?.Enabled != true)
+            {
+                return false;
+            }
+
+            double targetRatio = Math.Clamp(_autoCaptureBackgroundSampleControl.TargetEmptyRatio, 0d, 0.95d);
+            if (targetRatio <= 0d)
+            {
+                return false;
+            }
+
+            int saved = Math.Max(0, _autoCaptureCaptureSaved);
+            int emptySaved = Math.Max(0, _autoCaptureBackgroundFramesSaved);
+            if (saved <= 0)
+            {
+                return true;
+            }
+
+            double expectedEmpty = (saved + 1) * targetRatio;
+            return emptySaved + 1 <= Math.Ceiling(expectedEmpty);
         }
 
         private static bool IsHitLikeAction(string action)
@@ -91,7 +116,10 @@ namespace HaCreator.MapSimulator
             int totalSaved = 0;
             foreach (var bucket in EnumerateAllBuckets())
             {
-                totalSaved += _autoCaptureBucketSaved.TryGetValue(bucket, out int v) ? Math.Max(0, v) : 0;
+                if (mix.GetWeight(bucket) > 0)
+                {
+                    totalSaved += _autoCaptureBucketSaved.TryGetValue(bucket, out int v) ? Math.Max(0, v) : 0;
+                }
             }
 
             if (totalSaved <= 0)
@@ -194,6 +222,14 @@ namespace HaCreator.MapSimulator
         private AutoCaptureBucketRuntimeTuning BuildBucketTuning()
         {
             var tuning = new AutoCaptureBucketRuntimeTuning { Profile = _autoCaptureCurrentProfile };
+            if (_autoCaptureCurrentProfile == AutoCaptureProfile.BackgroundOnly)
+            {
+                tuning.DisableDamageNumbers = _autoCaptureBackgroundSampleControl?.SuppressDamageNumbers ?? true;
+                tuning.SuppressMobLabels = true;
+                tuning.SuppressSkillEffects = _autoCaptureBackgroundSampleControl?.SuppressSkillEffects ?? true;
+                return tuning;
+            }
+
             switch (_autoCaptureCurrentBucket)
             {
                 case AutoCaptureDataBucket.CleanBaseline:
@@ -218,7 +254,15 @@ namespace HaCreator.MapSimulator
             }
 
             _autoCaptureCurrentBucket = SelectBucketByGlobalDeficit();
-            _autoCaptureCurrentProfile = SelectProfileForBucket(_autoCaptureCurrentBucket);
+            if (ShouldUseBackgroundOnlyPass())
+            {
+                _autoCaptureCurrentBucket = AutoCaptureDataBucket.BackgroundOnly;
+                _autoCaptureCurrentProfile = AutoCaptureProfile.BackgroundOnly;
+            }
+            else
+            {
+                _autoCaptureCurrentProfile = SelectProfileForBucket(_autoCaptureCurrentBucket);
+            }
             _autoCaptureProfileSwitchTick = Environment.TickCount;
             _autoCapturePointRecipeSeed = _autoCaptureRandom.Next();
             _autoCapturePointDamageTemplate = PickAutoCapDamageTemplate(_autoCaptureCurrentProfile);
@@ -228,6 +272,11 @@ namespace HaCreator.MapSimulator
         private void RebuildAutoCapturePointSkillPool()
         {
             _autoCapturePointSkillPool.Clear();
+            if (_autoCaptureCurrentProfile == AutoCaptureProfile.BackgroundOnly)
+            {
+                return;
+            }
+
             if (_autoCaptureNativeDamageSkillPool.Count <= 0)
             {
                 return;
@@ -248,6 +297,7 @@ namespace HaCreator.MapSimulator
                 AutoCaptureProfile.AttackHeavy => 3,
                 AutoCaptureProfile.HitOcclusionHeavy => 4,
                 AutoCaptureProfile.DeathHeavy => 2,
+                AutoCaptureProfile.BackgroundOnly => 0,
                 _ => 2
             };
 

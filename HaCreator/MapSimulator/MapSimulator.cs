@@ -4174,7 +4174,10 @@ namespace HaCreator.MapSimulator
             // World rendering via RenderingManager
             _renderingManager.DrawBackgrounds(in renderContext, false); // back background
             _renderingManager.DrawMapObjects(in renderContext); // tiles and objects
-            _renderingManager.DrawMobs(in renderContext); // mobs - rendered behind portals
+            if (!ShouldSuppressAutoCaptureMobs())
+            {
+                _renderingManager.DrawMobs(in renderContext); // mobs - rendered behind portals
+            }
             DrawPlayer(gameTime, mapCenterX, mapCenterY, TickCount); // player character (has tombstone logic)
             _renderingManager.DrawDrops(in renderContext); // item/meso drops
             _renderingManager.DrawPortals(in renderContext); // portals
@@ -4464,7 +4467,8 @@ namespace HaCreator.MapSimulator
             }
 
             var boundsList = new List<(int classId, Rectangle bounds)>();
-            if (_mobPool?.ActiveMobs != null)
+            bool backgroundOnly = IsAutoCaptureBackgroundOnly();
+            if (!backgroundOnly && _mobPool?.ActiveMobs != null)
             {
                 int mapCenterX = _mapBoard?.CenterPoint.X ?? _mapCenterX;
                 int mapCenterY = _mapBoard?.CenterPoint.Y ?? _mapCenterY;
@@ -4521,6 +4525,10 @@ namespace HaCreator.MapSimulator
             if (_datasetGenerator.TrySaveFrameAndLabels(GraphicsDevice, boundsList, out string failReason))
             {
                 _autoCaptureCaptureSaved++;
+                if (backgroundOnly)
+                {
+                    _autoCaptureBackgroundFramesSaved++;
+                }
                 IncrementBucketCount(_autoCaptureBucketSaved, _autoCaptureCurrentBucket);
                 AppendBucketManifest(_datasetGenerator.CapturedFrameCount, _autoCaptureCurrentBucket, _autoCaptureCurrentProfile, true, rawBoxes, usableBoxes, deadBoxes, activeBoxes, emptyLabel, passIndex, sampleIndex);
                 MarkAutoCaptureSamplingDecision();

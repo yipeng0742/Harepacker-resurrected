@@ -58,6 +58,7 @@ namespace HaCreator.MapSimulator
             _autoCaptureProfileMix = _autoCaptureOptions.GetNormalizedProfileMix();
             _autoCaptureBucketMix = _autoCaptureOptions.GetNormalizedBucketMix();
             _autoCaptureBucketPolicy = _autoCaptureOptions.GetNormalizedBucketPolicy();
+            _autoCaptureBackgroundSampleControl = _autoCaptureOptions.GetNormalizedBackgroundSampleControl();
             _autoCaptureDamageNumberControl = _autoCaptureOptions.GetNormalizedDamageNumberControl();
             _autoCaptureRealSkillEffectControl = _autoCaptureOptions.GetNormalizedRealSkillEffectControl();
             _autoCaptureSkillCatalog = _autoCaptureOptions.GetNormalizedSkillCatalog();
@@ -108,6 +109,7 @@ namespace HaCreator.MapSimulator
             _autoCaptureCaptureAttempted = 0;
             _autoCaptureCaptureSaved = 0;
             _autoCaptureCaptureSkippedEmpty = 0;
+            _autoCaptureBackgroundFramesSaved = 0;
             _autoCaptureCaptureAttemptedSnapshot = 0;
             _autoCaptureCaptureSavedSnapshot = 0;
             _autoCaptureCaptureSkippedEmptySnapshot = 0;
@@ -141,6 +143,7 @@ namespace HaCreator.MapSimulator
 
             System.Console.WriteLine($"[AutoCap] map={_autoCaptureOptions.MapId:D9} res={_autoCaptureOptions.ResolutionName} total_points={_autoCaptureTotalPointCount} total_frames={_autoCaptureExpectedFrameCount} seed={runtimeSeed}");
             System.Console.WriteLine($"[AutoCap] camera_plan mode={_autoCaptureCameraPlan.Mode} step_mode={_autoCaptureCameraPlan.Traversal} warmup_frames={_autoCaptureCameraPlan.StartupWarmupFrames} settle_frames={_autoCaptureCameraPlan.SettleFrames} sample_frames_per_point={_autoCaptureCameraPlan.SampleFramesPerPoint} passes_per_point={_autoCaptureCameraPlan.PassesPerPoint}");
+            System.Console.WriteLine($"[AutoCap] background enabled={_autoCaptureBackgroundSampleControl.Enabled} target_empty_ratio={_autoCaptureBackgroundSampleControl.TargetEmptyRatio:0.###} suppress_mobs={_autoCaptureBackgroundSampleControl.SuppressMobs} suppress_damage_numbers={_autoCaptureBackgroundSampleControl.SuppressDamageNumbers} suppress_skill_effects={_autoCaptureBackgroundSampleControl.SuppressSkillEffects}");
             System.Console.WriteLine($"[AutoCap] dmg_num_ctrl global_cd={_autoCaptureDamageNumberControl.GlobalCooldownMs}ms per_mob_cd={_autoCaptureDamageNumberControl.PerMobCooldownMs}ms per_capture_frame={_autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame} max_active_numbers={_autoCaptureDamageNumberControl.MaxActiveNumbers} enable_miss={_autoCaptureDamageNumberControl.EnableMiss} damage_range={_autoCaptureDamageNumberControl.MinDamage}-{_autoCaptureDamageNumberControl.MaxDamage} distribution={_autoCaptureDamageNumberControl.DamageDistributionMode}");
             System.Console.WriteLine($"[AutoCap] real_skill_fx enabled={_autoCaptureRealSkillEffectControl.Enabled} source={_autoCaptureRealSkillEffectControl.Source} kind={_autoCaptureRealSkillEffectControl.Kind} loaded_framesets={_autoCaptureLoadedRealSkillEffectCount}");
             System.Console.WriteLine("[AutoCap] labels class0=mob_dead class1=mob_active");

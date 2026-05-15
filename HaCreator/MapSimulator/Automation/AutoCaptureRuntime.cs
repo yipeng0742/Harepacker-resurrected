@@ -9,14 +9,16 @@ namespace HaCreator.MapSimulator.Automation
         NormalMove,
         AttackHeavy,
         HitOcclusionHeavy,
-        DeathHeavy
+        DeathHeavy,
+        BackgroundOnly
     }
 
     internal enum AutoCaptureDataBucket
     {
         CleanBaseline,
         AnchorDecoupling,
-        ChaosOcclusion
+        ChaosOcclusion,
+        BackgroundOnly
     }
 
     internal enum AutoCaptureDamageTemplateStyle
@@ -67,15 +69,17 @@ namespace HaCreator.MapSimulator.Automation
             AutoCaptureBucketMix.CreateDefault();
         public AutoCaptureBucketPolicy BucketPolicy { get; set; } =
             AutoCaptureBucketPolicy.CreateDefault();
+        public AutoCaptureBackgroundSampleControl BackgroundSampleControl { get; set; } =
+            AutoCaptureBackgroundSampleControl.CreateDefault();
 
         public static Dictionary<AutoCaptureProfile, int> CreateDefaultProfileMix()
         {
             return new Dictionary<AutoCaptureProfile, int>
             {
-                [AutoCaptureProfile.NormalMove] = 30,
-                [AutoCaptureProfile.AttackHeavy] = 30,
-                [AutoCaptureProfile.HitOcclusionHeavy] = 25,
-                [AutoCaptureProfile.DeathHeavy] = 15
+                [AutoCaptureProfile.NormalMove] = 45,
+                [AutoCaptureProfile.AttackHeavy] = 35,
+                [AutoCaptureProfile.HitOcclusionHeavy] = 15,
+                [AutoCaptureProfile.DeathHeavy] = 5
             };
         }
 
@@ -129,6 +133,11 @@ namespace HaCreator.MapSimulator.Automation
         public AutoCaptureBucketPolicy GetNormalizedBucketPolicy()
         {
             return (BucketPolicy ?? AutoCaptureBucketPolicy.CreateDefault()).Normalize();
+        }
+
+        public AutoCaptureBackgroundSampleControl GetNormalizedBackgroundSampleControl()
+        {
+            return (BackgroundSampleControl ?? AutoCaptureBackgroundSampleControl.CreateDefault()).Normalize();
         }
     }
 
@@ -239,7 +248,34 @@ namespace HaCreator.MapSimulator.Automation
                 AutoCaptureDataBucket.CleanBaseline => Math.Max(0, CleanBaseline),
                 AutoCaptureDataBucket.AnchorDecoupling => Math.Max(0, AnchorDecoupling),
                 AutoCaptureDataBucket.ChaosOcclusion => Math.Max(0, ChaosOcclusion),
+                AutoCaptureDataBucket.BackgroundOnly => 0,
                 _ => 0
+            };
+        }
+    }
+
+    internal sealed class AutoCaptureBackgroundSampleControl
+    {
+        public bool Enabled { get; set; } = true;
+        public double TargetEmptyRatio { get; set; } = 0.15d;
+        public bool SuppressMobs { get; set; } = true;
+        public bool SuppressDamageNumbers { get; set; } = true;
+        public bool SuppressSkillEffects { get; set; } = true;
+
+        public static AutoCaptureBackgroundSampleControl CreateDefault()
+        {
+            return new AutoCaptureBackgroundSampleControl();
+        }
+
+        public AutoCaptureBackgroundSampleControl Normalize()
+        {
+            return new AutoCaptureBackgroundSampleControl
+            {
+                Enabled = Enabled,
+                TargetEmptyRatio = Math.Clamp(TargetEmptyRatio, 0d, 0.95d),
+                SuppressMobs = SuppressMobs,
+                SuppressDamageNumbers = SuppressDamageNumbers,
+                SuppressSkillEffects = SuppressSkillEffects
             };
         }
     }
@@ -310,7 +346,8 @@ namespace HaCreator.MapSimulator.Automation
                 [AutoCaptureProfile.NormalMove] = 0.08d,
                 [AutoCaptureProfile.AttackHeavy] = 0.16d,
                 [AutoCaptureProfile.HitOcclusionHeavy] = 0.18d,
-                [AutoCaptureProfile.DeathHeavy] = 0.05d
+                [AutoCaptureProfile.DeathHeavy] = 0.05d,
+                [AutoCaptureProfile.BackgroundOnly] = 0d
             };
         }
 
@@ -321,7 +358,8 @@ namespace HaCreator.MapSimulator.Automation
                 [AutoCaptureProfile.NormalMove] = 0.08d,
                 [AutoCaptureProfile.AttackHeavy] = 0.12d,
                 [AutoCaptureProfile.HitOcclusionHeavy] = 0.06d,
-                [AutoCaptureProfile.DeathHeavy] = 0.02d
+                [AutoCaptureProfile.DeathHeavy] = 0.02d,
+                [AutoCaptureProfile.BackgroundOnly] = 0d
             };
         }
 

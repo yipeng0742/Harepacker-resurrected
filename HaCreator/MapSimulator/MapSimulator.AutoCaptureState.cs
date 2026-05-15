@@ -44,6 +44,7 @@ namespace HaCreator.MapSimulator
         private Dictionary<AutoCaptureProfile, int> _autoCaptureProfileMix = AutoCaptureRunOptions.CreateDefaultProfileMix();
         private AutoCaptureBucketMix _autoCaptureBucketMix = AutoCaptureBucketMix.CreateDefault();
         private AutoCaptureBucketPolicy _autoCaptureBucketPolicy = AutoCaptureBucketPolicy.CreateDefault();
+        private AutoCaptureBackgroundSampleControl _autoCaptureBackgroundSampleControl = AutoCaptureBackgroundSampleControl.CreateDefault();
         private AutoCaptureDamageNumberControl _autoCaptureDamageNumberControl = AutoCaptureDamageNumberControl.CreateDefault();
         private AutoCaptureRealSkillEffectControl _autoCaptureRealSkillEffectControl = AutoCaptureRealSkillEffectControl.CreateDefault();
         private AutoCaptureSkillCatalogControl _autoCaptureSkillCatalog = AutoCaptureSkillCatalogControl.CreateDefault();
@@ -157,6 +158,7 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureCaptureAttempted = 0;
         private int _autoCaptureCaptureSaved = 0;
         private int _autoCaptureCaptureSkippedEmpty = 0;
+        private int _autoCaptureBackgroundFramesSaved = 0;
         private int _autoCaptureBoundsRawCount = 0;
         private int _autoCaptureBoundsUsableCount = 0;
         private int _autoCaptureCaptureAttemptedSnapshot = 0;
@@ -193,6 +195,7 @@ namespace HaCreator.MapSimulator
             public AutoCaptureProfile Profile { get; set; } = AutoCaptureProfile.NormalMove;
             public bool DisableDamageNumbers { get; set; }
             public bool SuppressMobLabels { get; set; }
+            public bool SuppressSkillEffects { get; set; }
             public double DamageLagProbOverride { get; set; } = -1d;
             public double HitDamageMinProbOverride { get; set; } = -1d;
         }
