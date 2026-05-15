@@ -817,16 +817,8 @@ namespace HaCreator.MapSimulator.Entities
                 adjustedShiftX = shiftCenteredX - originAdjustX;
             }
 
-            int drawX;
-            if (flip)
-            {
-                drawX = adjustedShiftX - frame.Width + frame.X;
-            }
-            else
-            {
-                drawX = adjustedShiftX - frame.X;
-            }
-            int drawY = shiftCenteredY - frame.Y;
+            int drawX = frame.X - adjustedShiftX;
+            int drawY = frame.Y - shiftCenteredY;
 
             return new Rectangle(
                 (int)(drawX * scale), 
