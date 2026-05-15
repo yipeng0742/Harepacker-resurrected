@@ -26,6 +26,10 @@ namespace HaCreator.MapSimulator
         private const int DefaultCaptureIntervalMs = 120;
         private const float YoloEdgeEpsilon = 1e-6f;
         private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
+        private const int LabelClassMobDead = 0;
+        private const int LabelClassMobActive = 1;
+        private const string LabelNameMobDead = "mob_dead";
+        private const string LabelNameMobActive = "mob_active";
 
         private int _lastCaptureTick = Environment.TickCount;
         private int _frameIndex = 0;
@@ -72,6 +76,7 @@ namespace HaCreator.MapSimulator
             _labelDir = Path.Combine(_sessionDir, "labels");
             Directory.CreateDirectory(_imageDir);
             Directory.CreateDirectory(_labelDir);
+            WriteDatasetMetadata();
         }
 
         public void ConfigureWriter(int threads, int queueCapacity)
@@ -423,6 +428,7 @@ namespace HaCreator.MapSimulator
 
             Directory.CreateDirectory(_imageDir);
             Directory.CreateDirectory(_labelDir);
+            WriteDatasetMetadata();
         }
 
         private bool TryEnsureCaptureTexture(GraphicsDevice graphicsDevice, int width, int height, out string reason)
@@ -593,6 +599,50 @@ namespace HaCreator.MapSimulator
             Directory.CreateDirectory(Path.GetDirectoryName(item.LabelPath));
             File.WriteAllBytes(item.ImagePath, item.PngBytes);
             File.WriteAllText(item.LabelPath, item.LabelText ?? string.Empty, Utf8NoBom);
+        }
+
+        private void WriteDatasetMetadata()
+        {
+            if (string.IsNullOrWhiteSpace(_sessionDir))
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(_sessionDir);
+            File.WriteAllText(Path.Combine(_sessionDir, "data.yaml"), BuildDataYamlText(), Utf8NoBom);
+            File.WriteAllText(Path.Combine(_sessionDir, "classes.txt"), $"{LabelNameMobDead}{Environment.NewLine}{LabelNameMobActive}{Environment.NewLine}", Utf8NoBom);
+            File.WriteAllText(Path.Combine(_sessionDir, "label_schema.json"), BuildLabelSchemaJson(), Utf8NoBom);
+        }
+
+        private static string BuildDataYamlText()
+        {
+            return string.Join(Environment.NewLine, new[]
+            {
+                "path: .",
+                "train: images",
+                "val: images",
+                "nc: 2",
+                "names:",
+                $"  {LabelClassMobDead}: {LabelNameMobDead}",
+                $"  {LabelClassMobActive}: {LabelNameMobActive}",
+                string.Empty
+            });
+        }
+
+        private static string BuildLabelSchemaJson()
+        {
+            return string.Join(Environment.NewLine, new[]
+            {
+                "{",
+                "  \"version\": 1,",
+                "  \"task\": \"detect\",",
+                "  \"classes\": [",
+                $"    {{ \"id\": {LabelClassMobDead}, \"name\": \"{LabelNameMobDead}\", \"description\": \"死亡或不可攻击怪物\" }},",
+                $"    {{ \"id\": {LabelClassMobActive}, \"name\": \"{LabelNameMobActive}\", \"description\": \"存活且可攻击怪物\" }}",
+                "  ]",
+                "}",
+                string.Empty
+            });
         }
 
         private static string BuildLabelText(List<(int classId, Rectangle bounds)> boundsList, int width, int height)
