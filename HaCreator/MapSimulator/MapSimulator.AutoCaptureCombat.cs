@@ -71,10 +71,49 @@ namespace HaCreator.MapSimulator
             bool saved,
             int rawBoxes,
             int usableBoxes,
-            bool forcedHitState,
-            bool damageEventTriggered)
+            int deadBoxes,
+            int activeBoxes,
+            bool emptyLabel,
+            int passIndex,
+            int sampleIndex)
         {
-            return;
+            try
+            {
+                string outputDir = _autoCaptureOptions?.OutputDir;
+                if (string.IsNullOrWhiteSpace(outputDir))
+                {
+                    return;
+                }
+
+                Directory.CreateDirectory(outputDir);
+                string path = Path.Combine(outputDir, "bucket_manifest.csv");
+                bool needsHeader = !File.Exists(path);
+                using (var writer = new StreamWriter(path, true, new UTF8Encoding(false)))
+                {
+                    if (needsHeader)
+                    {
+                        writer.WriteLine("frame,bucket,profile,saved,raw_boxes,usable_boxes,dead_boxes,active_boxes,empty_label,pass_index,sample_index");
+                    }
+
+                    writer.WriteLine(
+                        string.Join(",",
+                            Math.Max(0, frameNo),
+                            GetBucketCode(bucket),
+                            profile,
+                            saved ? "1" : "0",
+                            Math.Max(0, rawBoxes),
+                            Math.Max(0, usableBoxes),
+                            Math.Max(0, deadBoxes),
+                            Math.Max(0, activeBoxes),
+                            emptyLabel ? "1" : "0",
+                            Math.Max(0, passIndex),
+                            Math.Max(0, sampleIndex)));
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[AutoCap][manifest] write_failed: {ex.Message}");
+            }
         }
 
         private void ApplyAutoCaptureAugmentation(int tick)
@@ -125,15 +164,12 @@ namespace HaCreator.MapSimulator
                 double saveRate = capAttemptedDelta > 0 ? ((double)capSavedDelta / capAttemptedDelta) : 0d;
                 int scanIdx = _autoCaptureCurrentPointIndex + 1;
                 int scanTotal = _autoCaptureScanPath?.Count ?? 0;
-                System.Console.WriteLine($"[AutoCap][采集摘要] frame={capturedFrames} point_idx={scanIdx} point_total={scanTotal} sampled_frames_at_point={_autoCaptureSampledFramesAtPoint} phase={_autoCaptureCameraPhase} bucket={GetBucketCode(_autoCaptureCurrentBucket)} profile={_autoCaptureCurrentProfile} capture_attempted={capAttemptedDelta} saved={capSavedDelta} skipped_empty={capSkippedEmptyDelta} bucket_attempted=A:{bucketAttemptA},B:{bucketAttemptB},C:{bucketAttemptC} bucket_saved=A:{bucketSavedA},B:{bucketSavedB},C:{bucketSavedC} bounds_raw={boundsRawDelta} bounds_usable={boundsUsableDelta} save_fail={saveFailDelta} save_fail_reason={saveFailReason} save_fail_by_reason={saveFailByReason} save_rate={saveRate:0.000} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
+                System.Console.WriteLine($"[AutoCap][采集摘要] frame={capturedFrames} point_idx={scanIdx} point_total={scanTotal} pass_idx={_autoCaptureCurrentPassIndex + 1}/{Math.Max(1, _autoCapturePassesPerPoint)} sample_idx={_autoCaptureCurrentSampleIndex + 1}/{Math.Max(1, _autoCaptureSampleFramesPerPoint)} sampled_frames_at_point={_autoCaptureSampledFramesAtPoint} phase={_autoCaptureCameraPhase} bucket={GetBucketCode(_autoCaptureCurrentBucket)} profile={_autoCaptureCurrentProfile} capture_attempted={capAttemptedDelta} saved={capSavedDelta} skipped_empty={capSkippedEmptyDelta} bucket_attempted=A:{bucketAttemptA},B:{bucketAttemptB},C:{bucketAttemptC} bucket_saved=A:{bucketSavedA},B:{bucketSavedB},C:{bucketSavedC} bounds_raw={boundsRawDelta} bounds_usable={boundsUsableDelta} save_fail={saveFailDelta} save_fail_reason={saveFailReason} save_fail_by_reason={saveFailByReason} save_rate={saveRate:0.000} dmg_attempted={dmgAttemptedDelta} dmg_fired={dmgFiredDelta} dmg_skipped_cooldown={dmgSkippedDelta} dmg_active={_effectManager?.Combat?.ActiveDamageNumbers ?? 0} mobs_hit_peak_per_frame={dmgMobsHitPeak} segments_emitted={dmgSegmentsDelta}");
             }
 
             var combat = _effectManager?.Combat;
             var forceStateMobs = new List<MobItem>();
             var fallbackMobs = new List<MobItem>();
-            _autoCaptureLastFrameHasForcedHitState = false;
-            _autoCaptureLastFrameDamageEventTriggered = false;
-
             foreach (var mob in _mobPool.ActiveMobs)
             {
                 mob.ForceStateForDataset(null);
@@ -153,7 +189,6 @@ namespace HaCreator.MapSimulator
                             {
                                 mob.ForceStateForDataset(moveAction);
                                 hasForcedState = true;
-                                if (IsHitLikeAction(moveAction)) _autoCaptureLastFrameHasForcedHitState = true;
                             }
                         }
                         break;
@@ -165,7 +200,6 @@ namespace HaCreator.MapSimulator
                             {
                                 mob.ForceStateForDataset(attackAction);
                                 hasForcedState = true;
-                                if (IsHitLikeAction(attackAction)) _autoCaptureLastFrameHasForcedHitState = true;
                             }
                         }
                         break;
@@ -177,7 +211,6 @@ namespace HaCreator.MapSimulator
                             {
                                 mob.ForceStateForDataset(hitAction);
                                 hasForcedState = true;
-                                if (IsHitLikeAction(hitAction)) _autoCaptureLastFrameHasForcedHitState = true;
                             }
                         }
                         break;
@@ -189,7 +222,6 @@ namespace HaCreator.MapSimulator
                             {
                                 mob.ForceStateForDataset(dieAction);
                                 hasForcedState = true;
-                                if (IsHitLikeAction(dieAction)) _autoCaptureLastFrameHasForcedHitState = true;
                             }
                         }
                         break;
@@ -308,7 +340,6 @@ namespace HaCreator.MapSimulator
                     _autoCaptureDmgLastGlobalTick = tick;
                     _autoCaptureDmgEventsUsedOnCaptureFrame++;
                     _autoCaptureDmgMobsHit++;
-                    _autoCaptureLastFrameDamageEventTriggered = true;
                     _autoCaptureDmgMobsHitCurrentFrame++;
                     if (_autoCaptureDmgMobsHitCurrentFrame > _autoCaptureDmgMobsHitPeakSinceLastLog)
                     {

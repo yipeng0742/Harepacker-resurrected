@@ -144,9 +144,7 @@ namespace HaCreator.MapSimulator
                         _autoCaptureSettleFramesRemaining--;
                         return;
                     }
-                    PrepareAutoCaptureBucketForSampling();
-                    _autoCaptureSampledFramesAtPoint = 0;
-                    _autoCaptureCameraPhase = AutoCaptureCameraPhase.Sampling;
+                    BeginAutoCaptureSamplingAtCurrentPoint();
                     return;
                 case AutoCaptureCameraPhase.Sampling:
                 case AutoCaptureCameraPhase.Complete:
@@ -187,24 +185,53 @@ namespace HaCreator.MapSimulator
             _autoCaptureCurrentPointIndex = nextPointIndex;
             _autoCaptureSettleFramesRemaining = Math.Max(0, _autoCaptureCameraPlan?.SettleFrames ?? 0);
             _autoCaptureSampledFramesAtPoint = 0;
+            _autoCaptureCurrentPassIndex = 0;
+            _autoCaptureCurrentSampleIndex = 0;
             _autoCaptureCameraPhase = _autoCaptureSettleFramesRemaining > 0
                 ? AutoCaptureCameraPhase.Settling
                 : AutoCaptureCameraPhase.Sampling;
+            if (_autoCaptureCameraPhase == AutoCaptureCameraPhase.Sampling)
+            {
+                BeginAutoCaptureSamplingAtCurrentPoint();
+            }
+        }
+
+        private void BeginAutoCaptureSamplingAtCurrentPoint()
+        {
+            _autoCaptureCurrentPassIndex = 0;
+            _autoCaptureCurrentSampleIndex = 0;
+            _autoCaptureSampledFramesAtPoint = 0;
+            PrepareAutoCaptureBucketForSampling();
+            _autoCaptureCameraPhase = AutoCaptureCameraPhase.Sampling;
         }
 
         private void MarkAutoCaptureSamplingDecision()
         {
             if (_autoCaptureCameraPhase == AutoCaptureCameraPhase.Sampling)
             {
+                _autoCaptureCurrentSampleIndex++;
                 _autoCaptureSampledFramesAtPoint++;
-                if (_autoCaptureSampledFramesAtPoint >= Math.Max(1, _autoCaptureSampleFramesPerPoint))
+                int sampleFramesPerPass = Math.Max(1, _autoCaptureSampleFramesPerPoint);
+                int passesPerPoint = Math.Max(1, _autoCapturePassesPerPoint);
+                if (_autoCaptureCurrentSampleIndex >= sampleFramesPerPass)
                 {
-                    _autoCaptureCameraPhase = (_autoCaptureCurrentPointIndex + 1) >= _autoCaptureTotalPointCount
-                        ? AutoCaptureCameraPhase.Complete
-                        : AutoCaptureCameraPhase.MoveToPoint;
-                    if (_autoCaptureCameraPhase == AutoCaptureCameraPhase.Complete)
+                    _autoCaptureCurrentPassIndex++;
+                    _autoCaptureCurrentSampleIndex = 0;
+                    if (_autoCaptureCurrentPassIndex < passesPerPoint)
                     {
-                        HandleAutoCaptureCompletionIfNeeded();
+                        PrepareAutoCaptureBucketForSampling();
+                        return;
+                    }
+
+                    if (_autoCaptureSampledFramesAtPoint >= sampleFramesPerPass * passesPerPoint)
+                    {
+                        _autoCaptureCameraPhase = (_autoCaptureCurrentPointIndex + 1) >= _autoCaptureTotalPointCount
+                            ? AutoCaptureCameraPhase.Complete
+                            : AutoCaptureCameraPhase.MoveToPoint;
+                        if (_autoCaptureCameraPhase == AutoCaptureCameraPhase.Complete)
+                        {
+                            HandleAutoCaptureCompletionIfNeeded();
+                        }
                     }
                 }
             }

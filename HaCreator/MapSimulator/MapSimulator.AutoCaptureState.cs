@@ -34,6 +34,9 @@ namespace HaCreator.MapSimulator
         private int _autoCaptureSettleFramesRemaining = 0;
         private int _autoCaptureSampledFramesAtPoint = 0;
         private int _autoCaptureSampleFramesPerPoint = 4;
+        private int _autoCapturePassesPerPoint = 8;
+        private int _autoCaptureCurrentPassIndex = 0;
+        private int _autoCaptureCurrentSampleIndex = 0;
         private Random _autoCaptureRandom;
         private AutoCaptureDataBucket _autoCaptureCurrentBucket = AutoCaptureDataBucket.CleanBaseline;
         private AutoCaptureProfile _autoCaptureCurrentProfile = AutoCaptureProfile.NormalMove;
@@ -48,8 +51,6 @@ namespace HaCreator.MapSimulator
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketSaved = new Dictionary<AutoCaptureDataBucket, int>();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketAttemptedSnapshot = new Dictionary<AutoCaptureDataBucket, int>();
         private readonly Dictionary<AutoCaptureDataBucket, int> _autoCaptureBucketSavedSnapshot = new Dictionary<AutoCaptureDataBucket, int>();
-        private bool _autoCaptureLastFrameHasForcedHitState = false;
-        private bool _autoCaptureLastFrameDamageEventTriggered = false;
         private int _autoCaptureLastProfileLogFrame = -1;
         private AutoCaptureCameraPlan _autoCaptureCameraPlan = AutoCaptureCameraPlan.CreateDefault();
         private AutoCaptureCameraPhase _autoCaptureCameraPhase = AutoCaptureCameraPhase.Init;

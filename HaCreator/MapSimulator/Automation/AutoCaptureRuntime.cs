@@ -72,10 +72,10 @@ namespace HaCreator.MapSimulator.Automation
         {
             return new Dictionary<AutoCaptureProfile, int>
             {
-                [AutoCaptureProfile.NormalMove] = 40,
-                [AutoCaptureProfile.AttackHeavy] = 35,
-                [AutoCaptureProfile.HitOcclusionHeavy] = 15,
-                [AutoCaptureProfile.DeathHeavy] = 10
+                [AutoCaptureProfile.NormalMove] = 30,
+                [AutoCaptureProfile.AttackHeavy] = 30,
+                [AutoCaptureProfile.HitOcclusionHeavy] = 25,
+                [AutoCaptureProfile.DeathHeavy] = 15
             };
         }
 
@@ -142,6 +142,7 @@ namespace HaCreator.MapSimulator.Automation
         public int StartupWarmupFrames { get; set; } = 6;
         public int SettleFrames { get; set; } = 2;
         public int SampleFramesPerPoint { get; set; } = 4;
+        public int PassesPerPoint { get; set; } = 8;
 
         public static AutoCaptureCameraPlan CreateDefault()
         {
@@ -184,6 +185,7 @@ namespace HaCreator.MapSimulator.Automation
             int startupWarmupFrames = Math.Max(0, StartupWarmupFrames);
             int settleFrames = Math.Max(0, SettleFrames);
             int sampleFramesPerPoint = Math.Max(1, SampleFramesPerPoint);
+            int passesPerPoint = Math.Max(1, PassesPerPoint);
 
             return new AutoCaptureCameraPlan
             {
@@ -194,7 +196,8 @@ namespace HaCreator.MapSimulator.Automation
                 Traversal = traversal,
                 StartupWarmupFrames = startupWarmupFrames,
                 SettleFrames = settleFrames,
-                SampleFramesPerPoint = sampleFramesPerPoint
+                SampleFramesPerPoint = sampleFramesPerPoint,
+                PassesPerPoint = passesPerPoint
             };
         }
     }

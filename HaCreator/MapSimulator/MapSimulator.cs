@@ -4456,11 +4456,6 @@ namespace HaCreator.MapSimulator
                 return;
             }
 
-            if (!_datasetGenerator.ShouldCaptureFrame())
-            {
-                return;
-            }
-
             int width = GraphicsDevice?.PresentationParameters?.BackBufferWidth ?? 0;
             int height = GraphicsDevice?.PresentationParameters?.BackBufferHeight ?? 0;
             if (width <= 0 || height <= 0)
@@ -4491,22 +4486,50 @@ namespace HaCreator.MapSimulator
             _autoCaptureCaptureAttempted++;
             IncrementBucketCount(_autoCaptureBucketAttempted, _autoCaptureCurrentBucket);
             _autoCaptureBoundsRawCount += boundsList.Count;
-            _autoCaptureBoundsUsableCount += CountUsableCaptureRects(boundsList, width, height);
+            int rawBoxes = boundsList.Count;
+            int usableBoxes = CountUsableCaptureRects(boundsList, width, height);
+            _autoCaptureBoundsUsableCount += usableBoxes;
 
-            TryInjectFallbackMobBox(ref boundsList, width, height);
+            rawBoxes = boundsList.Count;
+            usableBoxes = CountUsableCaptureRects(boundsList, width, height);
+            if (usableBoxes == 0)
+            {
+                _autoCaptureCaptureSkippedEmpty++;
+            }
+            int deadBoxes = 0;
+            int activeBoxes = 0;
+            foreach (var item in boundsList)
+            {
+                if (!IsUsableCaptureRect(item.bounds, width, height))
+                {
+                    continue;
+                }
+
+                if (item.classId == AutoCapClassMobDead)
+                {
+                    deadBoxes++;
+                }
+                else if (item.classId == AutoCapClassMobActive)
+                {
+                    activeBoxes++;
+                }
+            }
+            bool emptyLabel = usableBoxes == 0;
+            int passIndex = _autoCaptureCurrentPassIndex;
+            int sampleIndex = _autoCaptureCurrentSampleIndex;
 
             if (_datasetGenerator.TrySaveFrameAndLabels(GraphicsDevice, boundsList, out string failReason))
             {
                 _autoCaptureCaptureSaved++;
                 IncrementBucketCount(_autoCaptureBucketSaved, _autoCaptureCurrentBucket);
-                AppendBucketManifest(_datasetGenerator.CapturedFrameCount, _autoCaptureCurrentBucket, _autoCaptureCurrentProfile, true, boundsList.Count, CountUsableCaptureRects(boundsList, width, height), _autoCaptureLastFrameHasForcedHitState, _autoCaptureLastFrameDamageEventTriggered);
+                AppendBucketManifest(_datasetGenerator.CapturedFrameCount, _autoCaptureCurrentBucket, _autoCaptureCurrentProfile, true, rawBoxes, usableBoxes, deadBoxes, activeBoxes, emptyLabel, passIndex, sampleIndex);
                 MarkAutoCaptureSamplingDecision();
             }
             else
             {
                 _autoCaptureSaveFailCount++;
                 IncrementAutoCaptureSaveFailReason(failReason);
-                AppendBucketManifest(_datasetGenerator.CapturedFrameCount, _autoCaptureCurrentBucket, _autoCaptureCurrentProfile, false, boundsList.Count, CountUsableCaptureRects(boundsList, width, height), _autoCaptureLastFrameHasForcedHitState, _autoCaptureLastFrameDamageEventTriggered);
+                AppendBucketManifest(_datasetGenerator.CapturedFrameCount, _autoCaptureCurrentBucket, _autoCaptureCurrentProfile, false, rawBoxes, usableBoxes, deadBoxes, activeBoxes, emptyLabel, passIndex, sampleIndex);
             }
         }
 

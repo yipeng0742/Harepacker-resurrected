@@ -65,7 +65,10 @@ namespace HaCreator.MapSimulator
             _autoCaptureWarmupFramesRemaining = _autoCaptureCameraPlan.StartupWarmupFrames;
             _autoCaptureSettleFramesRemaining = 0;
             _autoCaptureSampleFramesPerPoint = _autoCaptureCameraPlan.SampleFramesPerPoint;
+            _autoCapturePassesPerPoint = _autoCaptureCameraPlan.PassesPerPoint;
             _autoCaptureSampledFramesAtPoint = 0;
+            _autoCaptureCurrentPassIndex = 0;
+            _autoCaptureCurrentSampleIndex = 0;
 
             _datasetGenerator.ConfigureRecoverBackoff(new[] { 100, 300, 500 });
             _datasetGenerator.StartGeneration();
@@ -88,8 +91,6 @@ namespace HaCreator.MapSimulator
             _autoCaptureBucketSaved.Clear();
             _autoCaptureBucketAttemptedSnapshot.Clear();
             _autoCaptureBucketSavedSnapshot.Clear();
-            _autoCaptureLastFrameHasForcedHitState = false;
-            _autoCaptureLastFrameDamageEventTriggered = false;
             _autoCaptureDmgLastGlobalTick = int.MinValue / 2;
             _autoCaptureDmgFrameMarker = -1;
             _autoCaptureDmgEventsUsedOnCaptureFrame = 0;
@@ -130,7 +131,7 @@ namespace HaCreator.MapSimulator
             _autoCaptureLoadedRealSkillEffectCount = LoadAutoCaptureRealSkillEffects();
             BuildAutoCaptureScanPath();
             _autoCaptureTotalPointCount = _autoCaptureScanPath?.Count ?? 0;
-            _autoCaptureExpectedFrameCount = checked(_autoCaptureTotalPointCount * Math.Max(1, _autoCaptureSampleFramesPerPoint));
+            _autoCaptureExpectedFrameCount = checked(_autoCaptureTotalPointCount * Math.Max(1, _autoCaptureSampleFramesPerPoint) * Math.Max(1, _autoCapturePassesPerPoint));
             if (_autoCaptureTotalPointCount <= 0)
             {
                 throw new InvalidOperationException("E_AUTOCAP_CAMERA_PATH_INVALID: scan path is empty.");
@@ -139,7 +140,7 @@ namespace HaCreator.MapSimulator
             _autoCaptureStarted = true;
 
             System.Console.WriteLine($"[AutoCap] map={_autoCaptureOptions.MapId:D9} res={_autoCaptureOptions.ResolutionName} total_points={_autoCaptureTotalPointCount} total_frames={_autoCaptureExpectedFrameCount} seed={runtimeSeed}");
-            System.Console.WriteLine($"[AutoCap] camera_plan mode={_autoCaptureCameraPlan.Mode} step_mode={_autoCaptureCameraPlan.Traversal} warmup_frames={_autoCaptureCameraPlan.StartupWarmupFrames} settle_frames={_autoCaptureCameraPlan.SettleFrames} sample_frames_per_point={_autoCaptureCameraPlan.SampleFramesPerPoint}");
+            System.Console.WriteLine($"[AutoCap] camera_plan mode={_autoCaptureCameraPlan.Mode} step_mode={_autoCaptureCameraPlan.Traversal} warmup_frames={_autoCaptureCameraPlan.StartupWarmupFrames} settle_frames={_autoCaptureCameraPlan.SettleFrames} sample_frames_per_point={_autoCaptureCameraPlan.SampleFramesPerPoint} passes_per_point={_autoCaptureCameraPlan.PassesPerPoint}");
             System.Console.WriteLine($"[AutoCap] dmg_num_ctrl global_cd={_autoCaptureDamageNumberControl.GlobalCooldownMs}ms per_mob_cd={_autoCaptureDamageNumberControl.PerMobCooldownMs}ms per_capture_frame={_autoCaptureDamageNumberControl.MaxEventsPerCaptureFrame} max_active_numbers={_autoCaptureDamageNumberControl.MaxActiveNumbers} enable_miss={_autoCaptureDamageNumberControl.EnableMiss} damage_range={_autoCaptureDamageNumberControl.MinDamage}-{_autoCaptureDamageNumberControl.MaxDamage} distribution={_autoCaptureDamageNumberControl.DamageDistributionMode}");
             System.Console.WriteLine($"[AutoCap] real_skill_fx enabled={_autoCaptureRealSkillEffectControl.Enabled} source={_autoCaptureRealSkillEffectControl.Source} kind={_autoCaptureRealSkillEffectControl.Kind} loaded_framesets={_autoCaptureLoadedRealSkillEffectCount}");
             System.Console.WriteLine("[AutoCap] labels class0=mob_dead class1=mob_active");

@@ -51,6 +51,7 @@ namespace HaCreator.MapSimulator.Automation
             public int startup_warmup_frames { get; set; } = 6;
             public int settle_frames { get; set; } = 2;
             public int sample_frames_per_point { get; set; } = 4;
+            public int passes_per_point { get; set; } = 8;
         }
 
         private sealed class CaptureProfileMix
@@ -228,7 +229,7 @@ namespace HaCreator.MapSimulator.Automation
                 AutoCaptureCameraPlan cameraPlan = BuildCameraPlan(job.camera_plan);
                 AutoCaptureDamageNumberControl damageControl = BuildDamageNumberControl(job.damage_number_control);
                 AutoCaptureRealSkillEffectControl realSkillEffectControl = BuildRealSkillEffectControl(job.real_skill_effect);
-                Console.WriteLine($"  camera_plan  : mode={cameraPlan.Mode}, overlap={cameraPlan.GridOverlapRatioX:0.###}/{cameraPlan.GridOverlapRatioY:0.###}, start={cameraPlan.StartCorner}, traversal={cameraPlan.Traversal}, warmup_frames={cameraPlan.StartupWarmupFrames}, settle_frames={cameraPlan.SettleFrames}, sample_frames_per_point={cameraPlan.SampleFramesPerPoint}");
+                Console.WriteLine($"  camera_plan  : mode={cameraPlan.Mode}, overlap={cameraPlan.GridOverlapRatioX:0.###}/{cameraPlan.GridOverlapRatioY:0.###}, start={cameraPlan.StartCorner}, traversal={cameraPlan.Traversal}, warmup_frames={cameraPlan.StartupWarmupFrames}, settle_frames={cameraPlan.SettleFrames}, sample_frames_per_point={cameraPlan.SampleFramesPerPoint}, passes_per_point={cameraPlan.PassesPerPoint}");
                 Console.WriteLine("  labels       : class0=mob_dead, class1=mob_active");
                 Console.WriteLine($"  dmg_num_ctrl : global_cd={damageControl.GlobalCooldownMs}ms, per_mob_cd={damageControl.PerMobCooldownMs}ms, per_frame={damageControl.MaxEventsPerCaptureFrame}, active_nums={damageControl.MaxActiveNumbers}, ratio_cap={damageControl.UseMobRatioCap}, mob_ratio={damageControl.MobRatio:0.###}, frame_cap={damageControl.MinEventsPerCaptureFrame}-{damageControl.MaxEventsPerCaptureFrameCap}, enable_miss={damageControl.EnableMiss}, damage_range={damageControl.MinDamage}-{damageControl.MaxDamage}, distribution={damageControl.DamageDistributionMode}");
                 Console.WriteLine($"                 probs(normal/attack/hit/death)={damageControl.GetProbability(AutoCaptureProfile.NormalMove):0.###}/{damageControl.GetProbability(AutoCaptureProfile.AttackHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.HitOcclusionHeavy):0.###}/{damageControl.GetProbability(AutoCaptureProfile.DeathHeavy):0.###}");
@@ -757,7 +758,8 @@ namespace HaCreator.MapSimulator.Automation
                 Traversal = plan.traversal,
                 StartupWarmupFrames = plan.startup_warmup_frames,
                 SettleFrames = plan.settle_frames,
-                SampleFramesPerPoint = plan.sample_frames_per_point
+                SampleFramesPerPoint = plan.sample_frames_per_point,
+                PassesPerPoint = plan.passes_per_point
             }.Normalize();
         }
 
