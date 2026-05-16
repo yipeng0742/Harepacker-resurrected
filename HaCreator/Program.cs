@@ -194,6 +194,13 @@ namespace HaCreator
                 // 某些宿主环境可能不允许切换编码，忽略并继续。
             }
 
+            if (ReachabilityCliRunner.IsReachabilityMode(args))
+            {
+                int exitCode = ReachabilityCliRunner.Run(args);
+                Environment.Exit(exitCode);
+                return;
+            }
+
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
             // Startup
