@@ -149,7 +149,14 @@ namespace HaCreator.MapSimulator.Automation
             var response = new ReachabilityResponse { MapId = _request.MapId };
             foreach (var edge in _request.Edges)
             {
-                response.Results.Add(VerifyEdge(edge));
+                try
+                {
+                    response.Results.Add(VerifyEdge(edge));
+                }
+                catch (Exception ex)
+                {
+                    response.Results.Add(Fail(edge, "edge_exception:" + ex.GetType().Name + ":" + ex.Message, "high"));
+                }
             }
             return response;
         }
@@ -560,25 +567,36 @@ namespace HaCreator.MapSimulator.Automation
         private List<double> BuildStartCandidates(EdgeSpec edge, FhSpec src, double direction, double? preferred)
         {
             var values = new List<double>();
+            double min = Math.Min(src.MinX, src.MaxX);
+            double max = Math.Max(src.MinX, src.MaxX);
+            if (max - min <= 2.0)
+            {
+                values.Add((min + max) * 0.5);
+                return values.Distinct().ToList();
+            }
+            double inner1Min = min + 1.0;
+            double inner1Max = max - 1.0;
+            double inner2Min = min + 2.0;
+            double inner2Max = max - 2.0;
             if (preferred.HasValue)
             {
-                values.Add(Math.Clamp(preferred.Value, src.MinX + 2.0, src.MaxX - 2.0));
+                values.Add(Math.Clamp(preferred.Value, inner2Min <= inner2Max ? inner2Min : inner1Min, inner2Min <= inner2Max ? inner2Max : inner1Max));
             }
             if (direction > 0)
             {
-                values.Add(src.MaxX - 3.0);
-                values.Add(src.MaxX - 12.0);
-                values.Add(src.MaxX - 28.0);
+                values.Add(max - 3.0);
+                values.Add(max - 12.0);
+                values.Add(max - 28.0);
             }
             else if (direction < 0)
             {
-                values.Add(src.MinX + 3.0);
-                values.Add(src.MinX + 12.0);
-                values.Add(src.MinX + 28.0);
+                values.Add(min + 3.0);
+                values.Add(min + 12.0);
+                values.Add(min + 28.0);
             }
             values.Add(SrcCenterX(src));
             return values
-                .Select(v => Math.Clamp(v, src.MinX + 1.0, src.MaxX - 1.0))
+                .Select(v => Math.Clamp(v, inner1Min, inner1Max))
                 .Distinct()
                 .ToList();
         }
@@ -652,7 +670,14 @@ namespace HaCreator.MapSimulator.Automation
             var response = new ReachabilityResponse { MapId = _request.MapId };
             foreach (var edge in _request.Edges)
             {
-                response.Results.Add(VerifyEdge(edge));
+                try
+                {
+                    response.Results.Add(VerifyEdge(edge));
+                }
+                catch (Exception ex)
+                {
+                    response.Results.Add(Fail(edge, "edge_exception:" + ex.GetType().Name + ":" + ex.Message, "high"));
+                }
             }
             return response;
         }
@@ -856,23 +881,34 @@ namespace HaCreator.MapSimulator.Automation
         private List<double> BuildStartCandidates(EdgeSpec edge, FhSpec src, double direction, double? preferred)
         {
             var values = new List<double>();
+            double min = Math.Min(src.MinX, src.MaxX);
+            double max = Math.Max(src.MinX, src.MaxX);
+            if (max - min <= 2.0)
+            {
+                values.Add((min + max) * 0.5);
+                return values.Distinct().ToList();
+            }
+            double inner1Min = min + 1.0;
+            double inner1Max = max - 1.0;
+            double inner2Min = min + 2.0;
+            double inner2Max = max - 2.0;
             if (preferred.HasValue)
             {
-                values.Add(Math.Clamp(preferred.Value, src.MinX + 2.0, src.MaxX - 2.0));
+                values.Add(Math.Clamp(preferred.Value, inner2Min <= inner2Max ? inner2Min : inner1Min, inner2Min <= inner2Max ? inner2Max : inner1Max));
             }
             if (direction > 0)
             {
-                values.Add(src.MaxX - 2.0);
-                values.Add(src.MaxX - 10.0);
+                values.Add(max - 2.0);
+                values.Add(max - 10.0);
             }
             else if (direction < 0)
             {
-                values.Add(src.MinX + 2.0);
-                values.Add(src.MinX + 10.0);
+                values.Add(min + 2.0);
+                values.Add(min + 10.0);
             }
             values.Add(SrcCenterX(src));
             return values
-                .Select(v => Math.Clamp(v, src.MinX + 1.0, src.MaxX - 1.0))
+                .Select(v => Math.Clamp(v, inner1Min, inner1Max))
                 .Distinct()
                 .ToList();
         }

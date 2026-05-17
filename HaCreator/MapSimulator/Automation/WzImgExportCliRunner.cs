@@ -487,9 +487,9 @@ namespace HaCreator.MapSimulator.Automation
             {
                 if (prop is WzCanvasProperty canvas)
                 {
-                    string assetPath = Path.Combine(_assetRoot, SafeRelativePath(imageRelativePath), SafeRelativePath(propPath) + ".png");
+                    string assetPath = AssetPath(imageRelativePath, propPath, ".png");
                     Directory.CreateDirectory(Path.GetDirectoryName(assetPath) ?? _assetRoot);
-                    using var bitmap = canvas.GetLinkedWzCanvasBitmap();
+                    using var bitmap = canvas.PngProperty.GetImage(false);
                     bitmap.Save(assetPath, ImageFormat.Png);
                     record["asset_path"] = Path.GetRelativePath(_options.OutputRoot, assetPath).Replace('\\', '/');
                     Write(_resources, AssetRecord("canvas", category, imageRelativePath, propPath, assetPath));
@@ -497,7 +497,7 @@ namespace HaCreator.MapSimulator.Automation
                 }
                 else if (prop is WzBinaryProperty sound)
                 {
-                    string assetPath = Path.Combine(_assetRoot, SafeRelativePath(imageRelativePath), SafeRelativePath(propPath) + ".mp3");
+                    string assetPath = AssetPath(imageRelativePath, propPath, ".mp3");
                     Directory.CreateDirectory(Path.GetDirectoryName(assetPath) ?? _assetRoot);
                     sound.SaveToFile(assetPath);
                     record["asset_path"] = Path.GetRelativePath(_options.OutputRoot, assetPath).Replace('\\', '/');
@@ -509,7 +509,7 @@ namespace HaCreator.MapSimulator.Automation
                     byte[] bytes = SafeGetRawBytes(raw);
                     if (bytes != null)
                     {
-                        string assetPath = Path.Combine(_assetRoot, SafeRelativePath(imageRelativePath), SafeRelativePath(propPath) + ".bin");
+                        string assetPath = AssetPath(imageRelativePath, propPath, ".bin");
                         Directory.CreateDirectory(Path.GetDirectoryName(assetPath) ?? _assetRoot);
                         File.WriteAllBytes(assetPath, bytes);
                         record["asset_path"] = Path.GetRelativePath(_options.OutputRoot, assetPath).Replace('\\', '/');
@@ -559,7 +559,7 @@ namespace HaCreator.MapSimulator.Automation
                 try
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(outPath) ?? _options.OutputRoot);
-                    using var bitmap = canvas.GetLinkedWzCanvasBitmap();
+                    using var bitmap = canvas.PngProperty.GetImage(false);
                     bitmap.Save(outPath, ImageFormat.Png);
                     miniMapPath = Path.GetRelativePath(_options.OutputRoot, outPath).Replace('\\', '/');
                     if (width == 0) width = bitmap.Width;
@@ -889,6 +889,30 @@ namespace HaCreator.MapSimulator.Automation
                 sb.Append(c == '/' ? Path.DirectorySeparatorChar : invalid.Contains(c) ? '_' : c);
             }
             return sb.ToString();
+        }
+
+        private string AssetPath(string imageRelativePath, string propPath, string extension)
+        {
+            string imageDir = SafeRelativePath(imageRelativePath);
+            string fileName = SafeFileStem(propPath, 80) + "_" + Sha256Text(imageRelativePath + "|" + propPath).Substring(0, 16) + extension;
+            return Path.Combine(_assetRoot, imageDir, fileName);
+        }
+
+        private static string SafeFileStem(string value, int maxLength)
+        {
+            string safe = SafeRelativePath(value).Replace(Path.DirectorySeparatorChar, '_');
+            if (safe.Length <= maxLength)
+            {
+                return safe;
+            }
+            return safe.Substring(Math.Max(0, safe.Length - maxLength), maxLength);
+        }
+
+        private static string Sha256Text(string value)
+        {
+            using var sha = SHA256.Create();
+            byte[] bytes = Encoding.UTF8.GetBytes(value ?? "");
+            return Convert.ToHexString(sha.ComputeHash(bytes)).ToLowerInvariant();
         }
 
         private static string Sha256File(string path)
