@@ -117,7 +117,7 @@ namespace HaCreator.MapSimulator.Automation
         private static void PrintUsage()
         {
             Console.WriteLine("Usage:");
-            Console.WriteLine("  HaCreator --wz-img-export --wz-root <DataDir> --output-root <ExportDir> [--mode full|maps] [--map-id 100020000] [--overwrite|--resume] [--no-assets]");
+            Console.WriteLine("  HaCreator --wz-img-export --wz-root <DataDir> --output-root <ExportDir> [--mode full|maps|semantic] [--map-id 100020000] [--overwrite|--resume] [--no-assets]");
         }
 
         private static JsonSerializerOptions JsonOptions()
@@ -252,7 +252,11 @@ namespace HaCreator.MapSimulator.Automation
 
             if (string.Equals(_options.Mode, "maps", StringComparison.OrdinalIgnoreCase))
             {
-                files = files.Where(IsMapImagePath);
+                files = files.Where(p => IsMapImagePath(p) || IsStringMapImagePath(p));
+            }
+            else if (string.Equals(_options.Mode, "semantic", StringComparison.OrdinalIgnoreCase))
+            {
+                files = files.Where(p => IsMapImagePath(p) || IsStringMapImagePath(p) || IsMobImagePath(p) || IsStringMobImagePath(p));
             }
             if (_options.MapIds.Count > 0)
             {
