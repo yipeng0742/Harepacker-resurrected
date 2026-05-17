@@ -174,7 +174,8 @@ namespace HaCreator.MapSimulator.Automation
         private StreamWriter _ladderRopes;
         private StreamWriter _layers;
         private StreamWriter _strings;
-        private StreamWriter _audit;
+        private StreamWriter _mobStrings;
+        private StreamWriter _mobMeta;
 
         public WzImgResourceExporter(WzImgExportOptions options)
         {
@@ -225,7 +226,8 @@ namespace HaCreator.MapSimulator.Automation
             _ladderRopes = OpenJsonl("map_ladder_ropes.jsonl");
             _layers = OpenJsonl("map_layers.jsonl");
             _strings = OpenJsonl("string_maps.jsonl");
-            _audit = OpenJsonl("audit_xml_compare.jsonl");
+            _mobStrings = OpenJsonl("string_mobs.jsonl");
+            _mobMeta = OpenJsonl("mob_meta.jsonl");
         }
 
         private StreamWriter OpenJsonl(string name)
@@ -236,7 +238,7 @@ namespace HaCreator.MapSimulator.Automation
 
         private void CloseWriters()
         {
-            foreach (var writer in new[] { _resources, _maps, _footholds, _spawns, _portals, _ladderRopes, _layers, _strings, _audit })
+            foreach (var writer in new[] { _resources, _maps, _footholds, _spawns, _portals, _ladderRopes, _layers, _strings, _mobStrings, _mobMeta })
             {
                 writer?.Flush();
                 writer?.Dispose();
@@ -255,7 +257,7 @@ namespace HaCreator.MapSimulator.Automation
             if (_options.MapIds.Count > 0)
             {
                 var ids = new HashSet<string>(_options.MapIds.Select(id => id.ToString(CultureInfo.InvariantCulture) + ".img"), StringComparer.OrdinalIgnoreCase);
-                files = files.Where(p => ids.Contains(Path.GetFileName(p)) || IsStringMapImagePath(p));
+                files = files.Where(p => ids.Contains(Path.GetFileName(p)) || IsStringMapImagePath(p) || IsStringMobImagePath(p));
             }
             return files.OrderBy(p => p, StringComparer.OrdinalIgnoreCase);
         }
@@ -271,6 +273,19 @@ namespace HaCreator.MapSimulator.Automation
         {
             string normalized = path.Replace('/', '\\');
             return normalized.EndsWith("\\String\\Map.img", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsStringMobImagePath(string path)
+        {
+            string normalized = path.Replace('/', '\\');
+            return normalized.EndsWith("\\String\\Mob.img", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsMobImagePath(string path)
+        {
+            string normalized = path.Replace('/', '\\');
+            return normalized.IndexOf("\\Mob\\", StringComparison.OrdinalIgnoreCase) >= 0
+                && int.TryParse(Path.GetFileNameWithoutExtension(path), NumberStyles.Integer, CultureInfo.InvariantCulture, out _);
         }
 
         private void ExportImage(ImgFileSystemDataSource dataSource, string imgPath)
@@ -330,11 +345,18 @@ namespace HaCreator.MapSimulator.Automation
                 if (IsMapImagePath(imgPath))
                 {
                     ExportMapImage(relativePath, image);
-                    AuditXml(relativePath, imgPath);
                 }
                 if (string.Equals(relativePath.Replace('\\', '/'), "String/Map.img", StringComparison.OrdinalIgnoreCase))
                 {
                     ExportStringMap(image);
+                }
+                if (string.Equals(relativePath.Replace('\\', '/'), "String/Mob.img", StringComparison.OrdinalIgnoreCase))
+                {
+                    ExportStringMob(image);
+                }
+                if (IsMobImagePath(imgPath))
+                {
+                    ExportMobMeta(relativePath, image);
                 }
 
                 if (_summary.ParsedImages % 100 == 0)
@@ -760,24 +782,44 @@ namespace HaCreator.MapSimulator.Automation
             }
         }
 
-        private void AuditXml(string relativePath, string imgPath)
+        private void ExportStringMob(WzImage image)
         {
-            string xmlPath = imgPath + ".xml";
-            if (!File.Exists(xmlPath))
+            foreach (WzImageProperty mob in image.WzProperties)
             {
-                Write(_audit, new Dictionary<string, object>
+                if (!int.TryParse(mob.Name, NumberStyles.Integer, CultureInfo.InvariantCulture, out int mobId))
                 {
-                    ["relative_path"] = relativePath,
-                    ["status"] = "xml_missing",
+                    continue;
+                }
+                string name = GetString(mob, "name");
+                string desc = GetString(mob, "desc");
+                if (string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(desc))
+                {
+                    continue;
+                }
+                Write(_mobStrings, new Dictionary<string, object>
+                {
+                    ["mob_id"] = mobId,
+                    ["name"] = name,
+                    ["desc"] = desc,
                     ["source"] = "maplelib_img",
                 });
+            }
+        }
+
+        private void ExportMobMeta(string relativePath, WzImage image)
+        {
+            if (!int.TryParse(Path.GetFileNameWithoutExtension(relativePath), NumberStyles.Integer, CultureInfo.InvariantCulture, out int mobId))
+            {
                 return;
             }
-            Write(_audit, new Dictionary<string, object>
+
+            var info = image["info"] as WzImageProperty;
+            Write(_mobMeta, new Dictionary<string, object>
             {
+                ["mob_id"] = mobId,
+                ["level"] = NullableInt(info, "level"),
+                ["max_hp"] = NullableInt(info, "maxHP"),
                 ["relative_path"] = relativePath,
-                ["xml_path"] = xmlPath,
-                ["status"] = "xml_present",
                 ["source"] = "maplelib_img",
             });
         }
