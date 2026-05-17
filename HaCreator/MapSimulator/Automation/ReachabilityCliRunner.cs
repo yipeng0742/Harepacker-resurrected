@@ -5,7 +5,13 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using HaCreator.MapEditor;
+using HaCreator.MapEditor.Instance.Shapes;
+using HaCreator.MapSimulator.Character;
 using HaCreator.MapSimulator.Core;
+using Microsoft.Xna.Framework;
+using MapleBool = MapleLib.WzLib.WzStructure.MapleBool;
+using ItemTypes = MapleLib.WzLib.WzStructure.Data.ItemTypes;
 
 namespace HaCreator.MapSimulator.Automation
 {
@@ -37,7 +43,9 @@ namespace HaCreator.MapSimulator.Automation
                     return 2;
                 }
 
-                var verifier = new PhysicsReachabilityVerifier(request);
+                IReachabilityVerifier verifier = string.Equals(request.Engine, "lightweight", StringComparison.OrdinalIgnoreCase)
+                    ? new PhysicsReachabilityVerifier(request)
+                    : new PlayerCharacterReachabilityVerifier(request);
                 var result = verifier.VerifyAll();
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputPath)) ?? ".");
                 File.WriteAllText(outputPath, JsonSerializer.Serialize(result, JsonOptions()), Encoding.UTF8);
@@ -116,10 +124,522 @@ namespace HaCreator.MapSimulator.Automation
         }
     }
 
-    internal sealed class PhysicsReachabilityVerifier
+    internal interface IReachabilityVerifier
+    {
+        ReachabilityResponse VerifyAll();
+    }
+
+    internal sealed class PlayerCharacterReachabilityVerifier : IReachabilityVerifier
     {
         private readonly ReachabilityRequest _request;
         private readonly Dictionary<int, FhSpec> _nodes;
+        private readonly Dictionary<int, FootholdLine> _footholds;
+        private readonly PhysicsReachabilityVerifier _fallback;
+
+        public PlayerCharacterReachabilityVerifier(ReachabilityRequest request)
+        {
+            _request = request;
+            _nodes = request.Nodes.ToDictionary(n => n.FhId, n => n);
+            _footholds = BuildFootholds(request.Nodes);
+            _fallback = new PhysicsReachabilityVerifier(request);
+        }
+
+        public ReachabilityResponse VerifyAll()
+        {
+            var response = new ReachabilityResponse { MapId = _request.MapId };
+            foreach (var edge in _request.Edges)
+            {
+                response.Results.Add(VerifyEdge(edge));
+            }
+            return response;
+        }
+
+        private EdgeVerificationResult VerifyEdge(EdgeSpec edge)
+        {
+            if (!_nodes.TryGetValue(edge.SrcFh, out var src) || !_nodes.TryGetValue(edge.DstFh, out var dst))
+            {
+                return Fail(edge, "missing_foothold", "unknown");
+            }
+
+            string mode = NormalizeMode(edge.MovementMode);
+            if (mode == "walk" || mode == "fragment_bridge" || mode == "step_bridge")
+            {
+                var simple = SimulateWalk(edge, src, dst);
+                return ToEdgeResult(edge, simple, mode);
+            }
+            if (mode == "jump")
+            {
+                var jump = SimulateJump(edge, src, dst);
+                return ToEdgeResult(edge, jump, mode);
+            }
+            if (mode == "edge_drop" || mode == "edge_jump_drop")
+            {
+                var drop = SimulateEdgeDrop(edge, src, dst);
+                return ToEdgeResult(edge, drop, "edge_drop");
+            }
+            if (mode == "down_jump")
+            {
+                if (src.CantThrough)
+                {
+                    return Fail(edge, "blocked_by_cant_through", "high");
+                }
+                var downJump = SimulateDownJump(edge, src, dst);
+                return ToEdgeResult(edge, downJump, "down_jump");
+            }
+
+            return _fallback.VerifyEdgePublic(edge);
+        }
+
+        private CandidateResult SimulateWalk(EdgeSpec edge, FhSpec src, FhSpec dst)
+        {
+            double targetX = edge.TargetX ?? dst.Cx;
+            double direction = Math.Sign(targetX - src.Cx);
+            if (Math.Abs(direction) < 0.001)
+            {
+                direction = DstCenterX(src, dst) >= SrcCenterX(src) ? 1.0 : -1.0;
+            }
+            var candidates = BuildStartCandidates(edge, src, direction, null);
+            CandidateResult best = CandidateResult.Fail("no_candidate");
+            foreach (double startX in candidates)
+            {
+                var script = new InputScript
+                {
+                    Direction = direction,
+                    JumpPressMs = 0,
+                    DirectionHoldMs = Math.Min(_request.MaxSimMs, Math.Max(500.0, Math.Abs(targetX - startX) * 12.0)),
+                    StopAfterLanding = true,
+                };
+                var result = SimulatePlayer(edge, src, startX, script);
+                result.PreAlignX = startX;
+                best = CandidateResult.Better(best, result);
+                if (result.Success && result.Stable)
+                {
+                    break;
+                }
+            }
+            return best;
+        }
+
+        private CandidateResult SimulateJump(EdgeSpec edge, FhSpec src, FhSpec dst)
+        {
+            double direction = DstCenterX(src, dst) >= SrcCenterX(src) ? 1.0 : -1.0;
+            var candidates = BuildStartCandidates(edge, src, direction, edge.TargetX);
+            CandidateResult best = CandidateResult.Fail("no_candidate");
+            foreach (double startX in candidates)
+            {
+                foreach (double holdMs in new[] { 180.0, 260.0, 360.0, 520.0, 700.0 })
+                {
+                    var script = new InputScript
+                    {
+                        Direction = direction,
+                        JumpPressMs = 80.0,
+                        DirectionHoldMs = holdMs,
+                        StopAfterLanding = true,
+                    };
+                    var result = SimulatePlayer(edge, src, startX, script);
+                    result.PreAlignX = startX;
+                    best = CandidateResult.Better(best, result);
+                    if (result.Success && result.Stable)
+                    {
+                        return best;
+                    }
+                }
+            }
+            return best.Success ? best : CandidateResult.Better(best, _fallback.VerifyCandidate(edge, "jump"));
+        }
+
+        private CandidateResult SimulateEdgeDrop(EdgeSpec edge, FhSpec src, FhSpec dst)
+        {
+            if (src.ForbidFallDown)
+            {
+                return CandidateResult.Fail("blocked_by_forbid_fall_down");
+            }
+            double direction = DstCenterX(src, dst) >= SrcCenterX(src) ? 1.0 : -1.0;
+            var candidates = BuildStartCandidates(edge, src, direction, edge.TargetX);
+            CandidateResult best = CandidateResult.Fail("no_candidate");
+            foreach (double startX in candidates)
+            {
+                var script = new InputScript
+                {
+                    Direction = direction,
+                    JumpPressMs = 0,
+                    DirectionHoldMs = Math.Min(_request.MaxSimMs, 1200.0),
+                    StopAfterLanding = true,
+                };
+                var result = SimulatePlayer(edge, src, startX, script);
+                result.PreAlignX = startX;
+                best = CandidateResult.Better(best, result);
+                if (result.Success && result.Stable)
+                {
+                    break;
+                }
+            }
+            return best.Success ? best : CandidateResult.Better(best, _fallback.VerifyCandidate(edge, "edge_drop"));
+        }
+
+        private CandidateResult SimulateDownJump(EdgeSpec edge, FhSpec src, FhSpec dst)
+        {
+            var candidates = BuildStartCandidates(edge, src, 0.0, edge.TargetX);
+            CandidateResult best = CandidateResult.Fail("no_candidate");
+            foreach (double startX in candidates)
+            {
+                var script = new InputScript
+                {
+                    Direction = 0.0,
+                    Down = true,
+                    JumpPressMs = 90.0,
+                    DirectionHoldMs = 0.0,
+                    StopAfterLanding = true,
+                };
+                var result = SimulatePlayer(edge, src, startX, script);
+                result.PreAlignX = startX;
+                best = CandidateResult.Better(best, result);
+                if (result.Success && result.Stable)
+                {
+                    break;
+                }
+            }
+            return best.Success ? best : CandidateResult.Better(best, _fallback.VerifyCandidate(edge, "down_jump"));
+        }
+
+        private CandidateResult SimulatePlayer(EdgeSpec edge, FhSpec src, double startX, InputScript script)
+        {
+            if (!_footholds.TryGetValue(src.FhId, out var srcFh))
+            {
+                return CandidateResult.Fail("missing_source_foothold");
+            }
+
+            var build = new CharacterBuild
+            {
+                Speed = (float)Math.Max(10.0, _request.WalkSpeedPercent),
+                JumpPower = (float)Math.Max(10.0, _request.JumpPowerPercent),
+            };
+            var player = new PlayerCharacter(null, null, build);
+            player.SetFootholdLookup(FindFoothold);
+            double y = src.YAt(startX);
+            player.SetPosition((float)startX, (float)y);
+            player.Physics.CurrentFoothold = srcFh;
+            player.Physics.FallStartFoothold = null;
+            player.Physics.VelocityX = 0;
+            player.Physics.VelocityY = 0;
+            player.FacingRight = script.Direction >= 0;
+
+            double maxMs = Math.Max(400.0, _request.MaxSimMs);
+            double dtMs = Math.Max(5.0, _request.DtMs);
+            int stableTicks = 0;
+            int firstTargetMs = -1;
+            double lastMoveX = player.X;
+            double lastMoveY = player.Y;
+            int stillTicks = 0;
+
+            for (double elapsed = 0.0; elapsed <= maxMs; elapsed += dtMs)
+            {
+                bool holdDir = script.Direction != 0.0 && elapsed <= script.DirectionHoldMs;
+                bool left = holdDir && script.Direction < 0.0;
+                bool right = holdDir && script.Direction > 0.0;
+                bool jump = elapsed <= script.JumpPressMs;
+                bool down = script.Down && elapsed <= script.JumpPressMs;
+
+                if (script.StopAfterLanding && firstTargetMs >= 0)
+                {
+                    left = false;
+                    right = false;
+                    jump = false;
+                    down = false;
+                }
+
+                player.SetInput(left, right, false, down, jump, false, false);
+                player.Update((int)Math.Round(elapsed), (float)(dtMs / 1000.0));
+
+                int? currentFh = player.Physics.CurrentFoothold?.num;
+                if (currentFh == edge.DstFh)
+                {
+                    if (firstTargetMs < 0)
+                    {
+                        firstTargetMs = (int)Math.Round(elapsed);
+                    }
+                    stableTicks++;
+                    if (stableTicks >= StableFrameCount())
+                    {
+                        player.ClearInput();
+                        return new CandidateResult
+                        {
+                            Success = true,
+                            Stable = true,
+                            LandingFh = edge.DstFh,
+                            EndX = player.X,
+                            EndY = player.Y,
+                            ElapsedMs = elapsed,
+                            ErrorX = Math.Abs(player.X - Math.Clamp(player.X, _nodes[edge.DstFh].MinX, _nodes[edge.DstFh].MaxX)),
+                            ErrorY = Math.Abs(player.Y - _nodes[edge.DstFh].YAt(Math.Clamp(player.X, _nodes[edge.DstFh].MinX, _nodes[edge.DstFh].MaxX))),
+                            Reason = "player_character_landed_on_target",
+                        };
+                    }
+                }
+                else
+                {
+                    stableTicks = 0;
+                }
+
+                if (Math.Abs(player.X - lastMoveX) + Math.Abs(player.Y - lastMoveY) < 0.02)
+                {
+                    stillTicks++;
+                }
+                else
+                {
+                    stillTicks = 0;
+                    lastMoveX = player.X;
+                    lastMoveY = player.Y;
+                }
+                if (stillTicks > 90 && elapsed > 600.0)
+                {
+                    return CandidateResult.Fail("player_character_stalled", player.X, player.Y, elapsed / 1000.0);
+                }
+            }
+
+            int? landingFh = player.Physics.CurrentFoothold?.num;
+            return new CandidateResult
+            {
+                Success = false,
+                Stable = false,
+                LandingFh = landingFh,
+                EndX = player.X,
+                EndY = player.Y,
+                ElapsedMs = maxMs,
+                ErrorX = landingFh == edge.DstFh ? 0 : null,
+                ErrorY = landingFh == edge.DstFh ? 0 : null,
+                Reason = landingFh.HasValue ? "player_character_landed_on_other_fh" : "player_character_timeout_airborne",
+            };
+        }
+
+        private FootholdLine FindFoothold(float x, float y, float searchRange)
+        {
+            FootholdLine best = null;
+            double bestDelta = double.MaxValue;
+            foreach (var pair in _footholds)
+            {
+                var spec = _nodes[pair.Key];
+                if (spec.IsWall || x < spec.MinX - 2.0 || x > spec.MaxX + 2.0)
+                {
+                    continue;
+                }
+                double fhY = spec.YAt(Math.Clamp(x, spec.MinX, spec.MaxX));
+                double delta = fhY - y;
+                if (delta >= -10.0 && delta <= Math.Max(20.0, searchRange) && delta < bestDelta)
+                {
+                    best = pair.Value;
+                    bestDelta = delta;
+                }
+            }
+            return best;
+        }
+
+        private static Dictionary<int, FootholdLine> BuildFootholds(IEnumerable<FhSpec> nodes)
+        {
+            var board = new Board(new Point(4000, 4000), new Point(0, 0), null, false, null, ItemTypes.None, ItemTypes.None);
+            var result = new Dictionary<int, FootholdLine>();
+            foreach (var node in nodes)
+            {
+                var first = new FootholdAnchor(board, node.X1, node.Y1, node.Layer, node.Platform, false);
+                var second = new FootholdAnchor(board, node.X2, node.Y2, node.Layer, node.Platform, false);
+                var line = new FootholdLine(
+                    board,
+                    first,
+                    second,
+                    node.ForbidFallDown ? MapleBool.True : MapleBool.False,
+                    node.CantThrough ? MapleBool.True : MapleBool.False,
+                    node.Piece,
+                    node.Force)
+                {
+                    num = node.FhId,
+                    prev = node.PrevFh ?? 0,
+                    next = node.NextFh ?? 0,
+                };
+                result[node.FhId] = line;
+            }
+            foreach (var line in result.Values)
+            {
+                if (line.prev != 0 && result.TryGetValue(line.prev, out var prev))
+                {
+                    line.prevOverride = prev;
+                }
+                if (line.next != 0 && result.TryGetValue(line.next, out var next))
+                {
+                    line.nextOverride = next;
+                }
+                board.BoardItems.FootholdLines.Add(line);
+            }
+            return result;
+        }
+
+        private EdgeVerificationResult ToEdgeResult(EdgeSpec edge, CandidateResult result, string mode)
+        {
+            string risk = result.Success && result.Stable ? RiskFor(edge, result, mode) : "high";
+            double holdMs = mode == "jump"
+                ? Math.Min(800.0, Math.Max(180.0, result.ElapsedMs * 0.45))
+                : mode == "edge_drop"
+                    ? Math.Min(900.0, Math.Max(180.0, result.ElapsedMs * 0.65))
+                    : 0.0;
+            return new EdgeVerificationResult(edge)
+            {
+                Success = result.Success,
+                Stable = result.Stable,
+                Risk = risk,
+                LandingFh = result.LandingFh,
+                Cost = Math.Max(1.0, edge.Cost + (risk == "low" ? 0.0 : risk == "medium" ? 500.0 : 5000.0)),
+                Reason = result.Reason,
+                Source = "mapsim_physics",
+                EndX = result.EndX,
+                EndY = result.EndY,
+                ElapsedMs = result.ElapsedMs,
+                ErrorX = result.ErrorX,
+                ErrorY = result.ErrorY,
+                PreAlignX = result.PreAlignX,
+                Recommended = new RecommendedTiming
+                {
+                    PreAlignX = result.PreAlignX,
+                    PressMs = mode == "down_jump" ? 90.0 : mode == "jump" ? 80.0 : 0.0,
+                    HoldMs = holdMs,
+                    ReleaseMs = 40.0,
+                    LandingWaitMs = LandingWaitFor(mode, result),
+                    VerifyTolerance = Math.Max(_request.LandingTolerancePx, mode == "edge_drop" || mode == "down_jump" ? 18.0 : 12.0),
+                },
+            };
+        }
+
+        private double LandingWaitFor(string mode, CandidateResult result)
+        {
+            if (!result.Success)
+            {
+                return 250.0;
+            }
+            if (mode == "edge_drop" || mode == "down_jump")
+            {
+                return Math.Min(900.0, Math.Max(260.0, result.ElapsedMs * 0.28));
+            }
+            if (mode == "jump")
+            {
+                return Math.Min(650.0, Math.Max(160.0, result.ElapsedMs * 0.22));
+            }
+            return 80.0;
+        }
+
+        private string RiskFor(EdgeSpec edge, CandidateResult result, string mode)
+        {
+            if (!_nodes.TryGetValue(edge.SrcFh, out var src) || !_nodes.TryGetValue(edge.DstFh, out var dst))
+            {
+                return "unknown";
+            }
+            double dy = Math.Abs(dst.Cy - src.Cy);
+            double dx = Math.Abs(dst.Cx - src.Cx);
+            if ((mode == "walk" || mode == "fragment_bridge" || mode == "step_bridge") && result.Success)
+            {
+                return "low";
+            }
+            if ((mode == "jump" || mode == "edge_drop" || mode == "down_jump") && dy <= _request.LowRiskMaxDyPx && dx <= _request.LowRiskMaxDxPx)
+            {
+                return "low";
+            }
+            return "medium";
+        }
+
+        private EdgeVerificationResult Fail(EdgeSpec edge, string reason, string risk)
+        {
+            return new EdgeVerificationResult(edge)
+            {
+                Success = false,
+                Stable = false,
+                Risk = risk,
+                LandingFh = null,
+                Cost = Math.Max(1.0, edge.Cost + 5000.0),
+                Reason = reason,
+                Source = "mapsim_physics",
+            };
+        }
+
+        private List<double> BuildStartCandidates(EdgeSpec edge, FhSpec src, double direction, double? preferred)
+        {
+            var values = new List<double>();
+            if (preferred.HasValue)
+            {
+                values.Add(Math.Clamp(preferred.Value, src.MinX + 2.0, src.MaxX - 2.0));
+            }
+            if (direction > 0)
+            {
+                values.Add(src.MaxX - 3.0);
+                values.Add(src.MaxX - 12.0);
+                values.Add(src.MaxX - 28.0);
+            }
+            else if (direction < 0)
+            {
+                values.Add(src.MinX + 3.0);
+                values.Add(src.MinX + 12.0);
+                values.Add(src.MinX + 28.0);
+            }
+            values.Add(SrcCenterX(src));
+            return values
+                .Select(v => Math.Clamp(v, src.MinX + 1.0, src.MaxX - 1.0))
+                .Distinct()
+                .ToList();
+        }
+
+        private int StableFrameCount() => Math.Max(3, (int)Math.Ceiling(100.0 / Math.Max(5.0, _request.DtMs)));
+        private static string NormalizeMode(string mode) => string.Equals((mode ?? "").Trim(), "jump_vertical", StringComparison.OrdinalIgnoreCase) ? "jump" : (mode ?? "").Trim().ToLowerInvariant();
+        private static double SrcCenterX(FhSpec fh) => fh.Cx;
+        private static double DstCenterX(FhSpec src, FhSpec dst) => dst.Cx;
+
+        private sealed class InputScript
+        {
+            public double Direction { get; set; }
+            public bool Down { get; set; }
+            public double JumpPressMs { get; set; }
+            public double DirectionHoldMs { get; set; }
+            public bool StopAfterLanding { get; set; }
+        }
+    }
+
+    internal sealed class PhysicsReachabilityVerifier : IReachabilityVerifier
+    {
+        private readonly ReachabilityRequest _request;
+        private readonly Dictionary<int, FhSpec> _nodes;
+        public EdgeVerificationResult VerifyEdgePublic(EdgeSpec edge)
+        {
+            return VerifyEdge(edge);
+        }
+
+        public CandidateResult VerifyCandidate(EdgeSpec edge, string mode)
+        {
+            if (!_nodes.TryGetValue(edge.SrcFh, out var src) || !_nodes.TryGetValue(edge.DstFh, out var dst))
+            {
+                return CandidateResult.Fail("fallback_missing_foothold");
+            }
+            if (mode == "jump")
+            {
+                return VerifyJumpCandidate(edge, src, dst);
+            }
+            if (mode == "edge_drop")
+            {
+                return VerifyEdgeDropCandidate(edge, src, dst);
+            }
+            if (mode == "down_jump")
+            {
+                return VerifyDownJumpCandidate(edge, src, dst);
+            }
+            var result = VerifyEdge(edge);
+            return new CandidateResult
+            {
+                Success = result.Success,
+                Stable = result.Stable,
+                LandingFh = result.LandingFh,
+                EndX = result.EndX,
+                EndY = result.EndY,
+                ElapsedMs = result.ElapsedMs ?? 0.0,
+                ErrorX = result.ErrorX,
+                ErrorY = result.ErrorY,
+                PreAlignX = result.PreAlignX,
+                Reason = "fallback_" + result.Reason,
+            };
+        }
 
         public PhysicsReachabilityVerifier(ReachabilityRequest request)
         {
@@ -182,6 +702,11 @@ namespace HaCreator.MapSimulator.Automation
 
         private EdgeVerificationResult VerifyJump(EdgeSpec edge, FhSpec src, FhSpec dst)
         {
+            return ToEdgeResult(edge, VerifyJumpCandidate(edge, src, dst), "jump");
+        }
+
+        private CandidateResult VerifyJumpCandidate(EdgeSpec edge, FhSpec src, FhSpec dst)
+        {
             double direction = DstCenterX(src, dst) >= SrcCenterX(src) ? 1.0 : -1.0;
             var candidates = BuildStartCandidates(edge, src, direction, edge.TargetX);
             CandidateResult best = CandidateResult.Fail("no_candidate");
@@ -198,10 +723,16 @@ namespace HaCreator.MapSimulator.Automation
                     break;
                 }
             }
-            return ToEdgeResult(edge, best, "jump");
+            best.Reason = "fallback_" + best.Reason;
+            return best;
         }
 
         private EdgeVerificationResult VerifyEdgeDrop(EdgeSpec edge, FhSpec src, FhSpec dst)
+        {
+            return ToEdgeResult(edge, VerifyEdgeDropCandidate(edge, src, dst), "edge_drop");
+        }
+
+        private CandidateResult VerifyEdgeDropCandidate(EdgeSpec edge, FhSpec src, FhSpec dst)
         {
             double direction = DstCenterX(src, dst) >= SrcCenterX(src) ? 1.0 : -1.0;
             var candidates = BuildStartCandidates(edge, src, direction, edge.TargetX);
@@ -219,7 +750,8 @@ namespace HaCreator.MapSimulator.Automation
                     break;
                 }
             }
-            return ToEdgeResult(edge, best, "edge_drop");
+            best.Reason = "fallback_" + best.Reason;
+            return best;
         }
 
         private EdgeVerificationResult VerifyDownJump(EdgeSpec edge, FhSpec src, FhSpec dst)
@@ -228,6 +760,11 @@ namespace HaCreator.MapSimulator.Automation
             {
                 return Fail(edge, "blocked_by_cant_through", "high");
             }
+            return ToEdgeResult(edge, VerifyDownJumpCandidate(edge, src, dst), "down_jump");
+        }
+
+        private CandidateResult VerifyDownJumpCandidate(EdgeSpec edge, FhSpec src, FhSpec dst)
+        {
             var candidates = BuildStartCandidates(edge, src, 0.0, edge.TargetX);
             CandidateResult best = CandidateResult.Fail("no_candidate");
             foreach (double startX in candidates)
@@ -241,7 +778,8 @@ namespace HaCreator.MapSimulator.Automation
                     break;
                 }
             }
-            return ToEdgeResult(edge, best, "down_jump");
+            best.Reason = "fallback_" + best.Reason;
+            return best;
         }
 
         private CandidateResult SimulateAir(EdgeSpec edge, double startX, double startY, double vx, double vy, bool skipSrcUntilBelow)
@@ -427,6 +965,7 @@ namespace HaCreator.MapSimulator.Automation
     internal sealed class ReachabilityRequest
     {
         public int MapId { get; set; }
+        public string Engine { get; set; } = "player_character";
         public double WalkSpeedPercent { get; set; } = 100.0;
         public double JumpPowerPercent { get; set; } = 100.0;
         public double DtMs { get; set; } = 16.6667;
@@ -447,6 +986,12 @@ namespace HaCreator.MapSimulator.Automation
         public int Y2 { get; set; }
         public bool CantThrough { get; set; }
         public bool ForbidFallDown { get; set; }
+        public int? PrevFh { get; set; }
+        public int? NextFh { get; set; }
+        public int? Piece { get; set; }
+        public int? Force { get; set; }
+        public int Layer { get; set; }
+        public int Platform { get; set; }
         public bool IsWall => X1 == X2;
         public double MinX => Math.Min(X1, X2);
         public double MaxX => Math.Max(X1, X2);

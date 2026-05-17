@@ -201,6 +201,13 @@ namespace HaCreator
                 return;
             }
 
+            if (WzImgExportCliRunner.IsWzImgExportMode(args))
+            {
+                int exitCode = WzImgExportCliRunner.Run(args);
+                Environment.Exit(exitCode);
+                return;
+            }
+
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
             // Startup
