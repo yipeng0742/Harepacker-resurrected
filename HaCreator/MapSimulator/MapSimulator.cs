@@ -346,6 +346,11 @@ namespace HaCreator.MapSimulator
                 PreferredDepthStencilFormat = DepthFormat.Depth24Stencil8, 
             };
             _DxDeviceManager.DeviceCreated += graphics_DeviceCreated;
+            if (IsAutoCaptureEnabled)
+            {
+                _DxDeviceManager.PreparingDeviceSettings += graphics_PreparingDeviceSettings;
+                ForceAutoCaptureCompatibleGraphicsSettings();
+            }
             _DxDeviceManager.ApplyChanges();
 
             // Initialize rendering manager
@@ -355,11 +360,6 @@ namespace HaCreator.MapSimulator
                 () => Height);
             _renderingManager.Initialize(_effectManager, _gameState, _dynamicFootholds, _transportField, _limitedViewField);
 
-            if (IsAutoCaptureEnabled)
-            {
-                _DxDeviceManager.PreparingDeviceSettings += graphics_PreparingDeviceSettings;
-                ForceAutoCaptureCompatibleGraphicsSettings();
-            }
         }
 
         #region Loading and unloading
