@@ -77,9 +77,13 @@ namespace HaCreator.Wz
                     case "snowBall": // The snowball/snowman event. It has the snowman itself, which is a stateful object (somewhat of a mob), but we do not support it.
                     case "monsterCarnival": // The Monster Carnival. It has an immense amount of info and stateful objects, including the mobs and guardians. We do not support it. (e.g. 980000201)
                         copyPropNames.Add(prop.Name);
-                        if (!userless)
+                        if (!userless && !Program.IsHeadlessAutomationMode)
                         {
                             MessageBox.Show("The map you are opening has the feature \"" + prop.Name + "\", which is purposely not supported in the editor.\r\nTo get around this, HaCreator will copy the original feature's data byte-to-byte. This might cause the feature to stop working if it depends on map objects, such as footholds or mobs.");
+                        }
+                        else if (Program.IsHeadlessAutomationMode)
+                        {
+                            Console.WriteLine("[MapLoader][警告] map={0} feature={1} 当前未在编辑器中实现，自动化模式将按原始数据原样复制并继续。", mapImage.Name, prop.Name);
                         }
                         continue;
                     case "tokyoBossParty": // Neo Tokyo 802000801.img

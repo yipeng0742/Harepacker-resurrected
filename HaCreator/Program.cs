@@ -28,6 +28,7 @@ namespace HaCreator
         public static StartupManager StartupManager;
         public static bool AbortThreads = false;
         public static bool Restarting;
+        public static bool IsHeadlessAutomationMode { get; private set; } = false;
 
         public const string APP_NAME = "HaCreator";
 
@@ -196,6 +197,7 @@ namespace HaCreator
 
             if (ReachabilityCliRunner.IsReachabilityMode(args))
             {
+                IsHeadlessAutomationMode = true;
                 int exitCode = ReachabilityCliRunner.Run(args);
                 Environment.Exit(exitCode);
                 return;
@@ -203,6 +205,7 @@ namespace HaCreator
 
             if (WzImgExportCliRunner.IsWzImgExportMode(args))
             {
+                IsHeadlessAutomationMode = true;
                 int exitCode = WzImgExportCliRunner.Run(args);
                 Environment.Exit(exitCode);
                 return;
@@ -239,6 +242,7 @@ namespace HaCreator
 
             if (AutoCaptureCliRunner.IsAutoCaptureMode(args))
             {
+                IsHeadlessAutomationMode = true;
                 int exitCode = AutoCaptureCliRunner.Run(args);
                 SettingsManager.SaveSettings();
                 StartupManager?.SaveConfig();
