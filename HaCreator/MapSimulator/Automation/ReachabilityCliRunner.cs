@@ -229,6 +229,10 @@ namespace HaCreator.MapSimulator.Automation
 
         private CandidateResult SimulateJump(EdgeSpec edge, FhSpec src, FhSpec dst)
         {
+            if (HasRuntimePatch(edge.RuntimePatch))
+            {
+                return SimulateJumpWithRuntimePatch(edge, src, dst);
+            }
             double direction = DstCenterX(src, dst) >= SrcCenterX(src) ? 1.0 : -1.0;
             var candidates = BuildStartCandidates(edge, src, direction, edge.TargetX);
             CandidateResult best = CandidateResult.Fail("no_candidate");
@@ -253,6 +257,28 @@ namespace HaCreator.MapSimulator.Automation
                 }
             }
             return best.Success ? best : CandidateResult.Better(best, _fallback.VerifyCandidate(edge, "jump"));
+        }
+
+        private CandidateResult SimulateJumpWithRuntimePatch(EdgeSpec edge, FhSpec src, FhSpec dst)
+        {
+            double direction = DstCenterX(src, dst) >= SrcCenterX(src) ? 1.0 : -1.0;
+            double startX = edge.RuntimePatch?.PreAlignX ?? edge.TargetX ?? SrcCenterX(src);
+            var script = new InputScript
+            {
+                Direction = direction,
+                JumpPressMs = ClampMs(edge.RuntimePatch?.PressMs, 80.0, 30.0, _request.MaxSimMs),
+                DirectionHoldMs = ResolveRuntimePatchDirectionHoldMs(edge.RuntimePatch),
+                StopAfterLanding = true,
+            };
+            var result = SimulatePlayer(edge, src, startX, script);
+            result.PreAlignX = startX;
+            result.AppliedTiming = CloneTiming(edge.RuntimePatch);
+            if (result.AppliedTiming != null && !result.AppliedTiming.PreAlignX.HasValue)
+            {
+                result.AppliedTiming.PreAlignX = startX;
+            }
+            result.Reason = "runtime_patch_" + result.Reason;
+            return result;
         }
 
         private CandidateResult SimulateEdgeDrop(EdgeSpec edge, FhSpec src, FhSpec dst)
@@ -502,6 +528,7 @@ namespace HaCreator.MapSimulator.Automation
                 ErrorX = result.ErrorX,
                 ErrorY = result.ErrorY,
                 PreAlignX = result.PreAlignX,
+                AppliedTiming = CloneTiming(result.AppliedTiming),
                 Recommended = new RecommendedTiming
                 {
                     PreAlignX = result.PreAlignX,
@@ -605,6 +632,52 @@ namespace HaCreator.MapSimulator.Automation
         private static string NormalizeMode(string mode) => string.Equals((mode ?? "").Trim(), "jump_vertical", StringComparison.OrdinalIgnoreCase) ? "jump" : (mode ?? "").Trim().ToLowerInvariant();
         private static double SrcCenterX(FhSpec fh) => fh.Cx;
         private static double DstCenterX(FhSpec src, FhSpec dst) => dst.Cx;
+        private static bool HasRuntimePatch(RecommendedTiming patch)
+        {
+            return patch != null
+                && (patch.PreAlignX.HasValue || patch.PressMs > 0 || patch.HoldMs > 0 || patch.ReleaseMs > 0 || patch.LandingWaitMs > 0 || patch.VerifyTolerance > 0);
+        }
+
+        private double ResolveRuntimePatchDirectionHoldMs(RecommendedTiming patch)
+        {
+            if (patch == null)
+            {
+                return 180.0;
+            }
+            double pressMs = ClampMs(patch.PressMs, 80.0, 30.0, _request.MaxSimMs);
+            if (patch.ReleaseMs > 0)
+            {
+                return ClampMs(pressMs + patch.ReleaseMs, pressMs, pressMs, _request.MaxSimMs);
+            }
+            if (patch.HoldMs > 0)
+            {
+                return ClampMs(patch.HoldMs, pressMs, pressMs, _request.MaxSimMs);
+            }
+            return 180.0;
+        }
+
+        private static double ClampMs(double? value, double fallback, double min, double max)
+        {
+            double source = value.HasValue && value.Value > 0 ? value.Value : fallback;
+            return Math.Clamp(source, min, Math.Max(min, max));
+        }
+
+        private static RecommendedTiming CloneTiming(RecommendedTiming source)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+            return new RecommendedTiming
+            {
+                PreAlignX = source.PreAlignX,
+                PressMs = source.PressMs,
+                HoldMs = source.HoldMs,
+                ReleaseMs = source.ReleaseMs,
+                LandingWaitMs = source.LandingWaitMs,
+                VerifyTolerance = source.VerifyTolerance,
+            };
+        }
 
         private sealed class InputScript
         {
@@ -931,6 +1004,7 @@ namespace HaCreator.MapSimulator.Automation
                 ErrorX = result.ErrorX,
                 ErrorY = result.ErrorY,
                 PreAlignX = result.PreAlignX,
+                AppliedTiming = CloneTiming(result.AppliedTiming),
                 Recommended = new RecommendedTiming
                 {
                     PreAlignX = result.PreAlignX,
@@ -960,6 +1034,23 @@ namespace HaCreator.MapSimulator.Automation
                 return "low";
             }
             return "medium";
+        }
+
+        private static RecommendedTiming CloneTiming(RecommendedTiming source)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+            return new RecommendedTiming
+            {
+                PreAlignX = source.PreAlignX,
+                PressMs = source.PressMs,
+                HoldMs = source.HoldMs,
+                ReleaseMs = source.ReleaseMs,
+                LandingWaitMs = source.LandingWaitMs,
+                VerifyTolerance = source.VerifyTolerance,
+            };
         }
 
         private EdgeVerificationResult SimpleSuccess(EdgeSpec edge, FhSpec dst, string reason, string risk, double costScale)
@@ -1053,6 +1144,7 @@ namespace HaCreator.MapSimulator.Automation
         public string MovementMode { get; set; } = "";
         public double Cost { get; set; }
         public double? TargetX { get; set; }
+        public RecommendedTiming RuntimePatch { get; set; }
     }
 
     internal sealed class ReachabilityResponse
@@ -1092,6 +1184,7 @@ namespace HaCreator.MapSimulator.Automation
         public double? ErrorX { get; set; }
         public double? ErrorY { get; set; }
         public double? PreAlignX { get; set; }
+        public RecommendedTiming AppliedTiming { get; set; }
         public RecommendedTiming Recommended { get; set; } = new RecommendedTiming();
     }
 
@@ -1116,6 +1209,7 @@ namespace HaCreator.MapSimulator.Automation
         public double? ErrorX { get; set; }
         public double? ErrorY { get; set; }
         public double? PreAlignX { get; set; }
+        public RecommendedTiming AppliedTiming { get; set; }
         public string Reason { get; set; } = "";
 
         public static CandidateResult Fail(string reason, double? x = null, double? y = null, double elapsedS = 0.0)

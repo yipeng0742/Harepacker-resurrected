@@ -17,30 +17,69 @@ namespace HaCreator.MapSimulator.IPC
         public bool Up { get; set; }
         public bool Down { get; set; }
         public bool Jump { get; set; }
+        public bool Attack { get; set; }
+        public bool Pickup { get; set; }
         public bool Reset { get; set; }
+        public int SkillSlot { get; set; } = -1;
+        public string SkillToken { get; set; } = "";
         public float TargetX { get; set; }
         public float TargetY { get; set; }
     }
 
+    public sealed class GymMobState
+    {
+        public int MobId { get; set; }
+        public int PoolId { get; set; }
+        public string Name { get; set; }
+        public float X { get; set; }
+        public float Y { get; set; }
+        public bool Alive { get; set; }
+        public int CurrentHp { get; set; }
+        public int MaxHp { get; set; }
+        public int FhId { get; set; }
+        public bool FacingRight { get; set; }
+        public bool CanAttack { get; set; }
+        public float DistanceToPlayer { get; set; }
+        public float AttackRangePx { get; set; }
+    }
+
     public sealed class GymState
     {
+        public int MapId { get; set; }
+        public int Tick { get; set; }
+        public int Frame { get; set; }
         public float X { get; set; }
         public float Y { get; set; }
         public float VX { get; set; }
         public float VY { get; set; }
+        public bool Alive { get; set; }
+        public int Hp { get; set; }
+        public int MaxHp { get; set; }
+        public int Mp { get; set; }
+        public int MaxMp { get; set; }
         public bool IsGrounded { get; set; }
+        public bool FacingRight { get; set; }
+        public int CurrentFhId { get; set; }
+        public int FallStartFhId { get; set; }
+        public bool IsOnLadder { get; set; }
+        public bool IsOnPortal { get; set; }
         public float DistLeftEdge { get; set; }
         public float DistRightEdge { get; set; }
+        public float PlatformMinX { get; set; }
+        public float PlatformMaxX { get; set; }
         public float TargetX { get; set; }
         public float TargetY { get; set; }
         public bool IsDone { get; set; }
         public float NearestLadderX { get; set; }
         public float NearestLadderTop { get; set; }
         public float NearestLadderBottom { get; set; }
+        public bool LadderOverlap { get; set; }
         public bool IsOverlappingLadder { get; set; }
         public float NearestPortalX { get; set; }
         public float NearestPortalY { get; set; }
+        public bool PortalOverlap { get; set; }
         public bool IsOverlappingPortal { get; set; }
+        public GymMobState[] Mobs { get; set; } = Array.Empty<GymMobState>();
     }
 
     /// <summary>

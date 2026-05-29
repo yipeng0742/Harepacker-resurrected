@@ -5,6 +5,7 @@ using HaCreator.MapEditor.Instance.Misc;
 using HaCreator.MapEditor.Instance.Shapes;
 using HaCreator.MapSimulator.UI;
 using HaCreator.MapSimulator.Character;
+using HaCreator.MapSimulator.IPC;
 using HaCreator.MapSimulator.Loaders;
 using HaSharedLibrary.Wz;
 using HaCreator.MapSimulator.Entities;
@@ -1913,6 +1914,8 @@ namespace HaCreator.MapSimulator
             KeyboardState newKeyboardState = Keyboard.GetState();  // get the newest state
             MouseState newMouseState = mouseCursor.MouseState;
 
+            BeginGymControlFrame(currTickCount);
+
             // Update UI Windows - handles ESC to close windows and I/E/S/Q toggles
             // Pass chat state to prevent hotkeys from working while typing
             bool uiWindowsHandledEsc = false;
@@ -2605,6 +2608,8 @@ namespace HaCreator.MapSimulator
 
             // Cleanup finished sound instances
             _soundManager?.Update();
+
+            EndGymControlFrame();
 
             base.Update(gameTime);
         }

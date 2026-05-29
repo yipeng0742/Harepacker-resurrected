@@ -203,6 +203,14 @@ namespace HaCreator
                 return;
             }
 
+            if (SimGymCliRunner.IsSimGymMode(args))
+            {
+                IsHeadlessAutomationMode = true;
+                int exitCode = SimGymCliRunner.Run(args);
+                Environment.Exit(exitCode);
+                return;
+            }
+
             if (WzImgExportCliRunner.IsWzImgExportMode(args))
             {
                 IsHeadlessAutomationMode = true;
