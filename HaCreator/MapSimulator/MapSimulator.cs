@@ -352,6 +352,11 @@ namespace HaCreator.MapSimulator
                 _DxDeviceManager.PreparingDeviceSettings += graphics_PreparingDeviceSettings;
                 ForceAutoCaptureCompatibleGraphicsSettings();
             }
+            else if (UseSimGymCompatibleGraphics)
+            {
+                _DxDeviceManager.PreparingDeviceSettings += graphics_PreparingDeviceSettings_SimGym;
+                ForceSimGymCompatibleGraphicsSettings();
+            }
             _DxDeviceManager.ApplyChanges();
 
             // Initialize rendering manager
@@ -528,6 +533,10 @@ namespace HaCreator.MapSimulator
 
             // Sound effects from Sound.wz/Game.img - using SoundManager for concurrent playback
             _soundManager = new SoundManager();
+            if (SimGymRuntime.MuteAudio)
+            {
+                _soundManager.Volume = 0f;
+            }
             WzImage soundGameImage = Program.FindImage("Sound", "Game.img");
             if (soundGameImage != null)
             {
@@ -1921,7 +1930,8 @@ namespace HaCreator.MapSimulator
             bool uiWindowsHandledEsc = false;
             if (uiWindowManager != null)
             {
-                uiWindowsHandledEsc = uiWindowManager.Update(gameTime, currTickCount, _chat.IsActive);
+                bool suppressUiHotkeys = _gymEnabled && SimGymRuntime.DisableLocalHotkeys;
+                uiWindowsHandledEsc = uiWindowManager.Update(gameTime, currTickCount, _chat.IsActive || suppressUiHotkeys);
             }
 
             // Allows the game to exit via gamepad Back button only
@@ -1937,7 +1947,8 @@ namespace HaCreator.MapSimulator
             }
 #endif
             // Handle full screen
-            bool bIsAltEnterPressed = newKeyboardState.IsKeyDown(Keys.LeftAlt) && newKeyboardState.IsKeyDown(Keys.Enter);
+            bool suppressLocalHotkeys = _gymEnabled && SimGymRuntime.DisableLocalHotkeys;
+            bool bIsAltEnterPressed = !suppressLocalHotkeys && newKeyboardState.IsKeyDown(Keys.LeftAlt) && newKeyboardState.IsKeyDown(Keys.Enter);
             if (bIsAltEnterPressed)
             {
                 _DxDeviceManager.IsFullScreen = !_DxDeviceManager.IsFullScreen;
@@ -1946,7 +1957,7 @@ namespace HaCreator.MapSimulator
             }
 
             // Handle print screen
-            if (newKeyboardState.IsKeyDown(Keys.PrintScreen))
+            if (!suppressLocalHotkeys && newKeyboardState.IsKeyDown(Keys.PrintScreen))
             {
                 if (!_screenshotManager.TakeScreenshot && _screenshotManager.IsComplete)
                 {
@@ -1954,7 +1965,7 @@ namespace HaCreator.MapSimulator
                 }
             }
 
-            if (IsAutoCaptureEnabled && newKeyboardState.IsKeyUp(Keys.F4) && _oldKeyboardState.IsKeyDown(Keys.F4))
+            if (!suppressLocalHotkeys && IsAutoCaptureEnabled && newKeyboardState.IsKeyUp(Keys.F4) && _oldKeyboardState.IsKeyDown(Keys.F4))
             {
                 _datasetGenerator.ToggleGeneration();
             }

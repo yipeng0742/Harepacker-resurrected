@@ -6,6 +6,8 @@ using HaSharedLibrary.Wz;
 using MapleLib.Img;
 using MapleLib.WzLib;
 using MapleLib.WzLib.WzStructure;
+using SharpDX;
+using SharpDX.DXGI;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -61,12 +63,15 @@ namespace HaCreator.MapSimulator.Automation
                 }
 
                 Console.WriteLine($"[SimGym] 启动 map={mapId:D9} port={gymPort} resolution={resolutionName}");
-                using (var simulator = new MapSimulator(board, $"SimGym-{mapId:D9}", string.IsNullOrWhiteSpace(spawnPortal) ? null : spawnPortal))
+                SimGymRuntime.Current = new SimGymRunOptions
                 {
-                    simulator.EnableGymControl(gymPort);
-                    simulator.Run();
-                }
-                return 0;
+                    UseCompatibleGraphics = true,
+                    EnableGraphicsDiagnostics = true,
+                    MuteAudio = HasFlag(args, "--mute-audio"),
+                    DisableLocalHotkeys = HasFlag(args, "--disable-local-hotkeys"),
+                };
+                WriteEnvironmentDiagnostics(versionPath);
+                return SimHeadlessCliRunner.Run(board, gymPort, string.IsNullOrWhiteSpace(spawnPortal) ? null : spawnPortal);
             }
             catch (Exception ex)
             {
@@ -75,6 +80,7 @@ namespace HaCreator.MapSimulator.Automation
             }
             finally
             {
+                try { SimGymRuntime.Current = null; } catch { }
                 try { Program.DataSource?.Dispose(); Program.DataSource = null; } catch { }
             }
         }
@@ -163,7 +169,92 @@ namespace HaCreator.MapSimulator.Automation
         private static void PrintUsage()
         {
             Console.WriteLine("Usage:");
-            Console.WriteLine("  HaCreator --sim-gym <map_id> --gym-port <port> --version-path <img_fs_dir> [--spawn-portal sp] [--resolution 1366x768]");
+            Console.WriteLine("  HaCreator --sim-gym <map_id> --gym-port <port> --version-path <img_fs_dir> [--spawn-portal sp] [--resolution 1366x768] [--mute-audio] [--disable-local-hotkeys]");
+        }
+
+        private static bool HasFlag(string[] args, string flag)
+        {
+            return args != null && args.Any(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static void WriteEnvironmentDiagnostics(string versionPath)
+        {
+            if (!SimGymRuntime.EnableGraphicsDiagnostics)
+            {
+                return;
+            }
+
+            try
+            {
+                Console.WriteLine($"[SimGym][diag] cwd={Environment.CurrentDirectory}");
+                Console.WriteLine($"[SimGym][diag] version_path={versionPath}");
+                Console.WriteLine($"[SimGym][diag] appdata_root={HaCreatorPaths.AppDataRoot}");
+                Console.WriteLine($"[SimGym][diag] appdata_env={Environment.GetEnvironmentVariable(HaCreatorPaths.AppDataRootEnvName) ?? ""}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SimGym][diag] env_failed={ex.GetType().Name}:{ex.Message}");
+            }
+
+            try
+            {
+                using var factory = new Factory1();
+                var adapters = factory.Adapters1;
+                Console.WriteLine($"[SimGym][diag] dxgi_adapter_count={adapters.Length}");
+                for (int i = 0; i < adapters.Length; i++)
+                {
+                    using var adapter = adapters[i];
+                    var desc = adapter.Description1;
+                    Console.WriteLine(
+                        $"[SimGym][diag] adapter[{i}] desc={desc.Description} vendor={desc.VendorId} device={desc.DeviceId} flags={desc.Flags}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SimGym][diag] dxgi_enum_failed={ex.GetType().Name}:{ex.Message}");
+            }
+        }
+
+        private static void ValidateSimGraphicsEnvironment()
+        {
+            try
+            {
+                using var factory = new Factory1();
+                var adapters = factory.Adapters1;
+                if (adapters == null || adapters.Length <= 0)
+                {
+                    throw new InvalidOperationException("DXGI 未枚举到任何适配器。");
+                }
+
+                bool anyOutput = false;
+                for (int i = 0; i < adapters.Length; i++)
+                {
+                    using var adapter = adapters[i];
+                    try
+                    {
+                        using var output = adapter.GetOutput(0);
+                        if (output != null)
+                        {
+                            anyOutput = true;
+                            break;
+                        }
+                    }
+                    catch (SharpDXException ex) when ((uint)ex.HResult == 0x887A0002u)
+                    {
+                        // DXGI_ERROR_NOT_FOUND: 当前会话下该 adapter 没有关联显示输出。
+                    }
+                }
+
+                if (!anyOutput)
+                {
+                    throw new InvalidOperationException(
+                        "DXGI 适配器存在，但当前桌面会话下没有任何可用输出；MonoGame GraphicsAdapter 会在此环境下初始化失败。");
+                }
+            }
+            catch (Exception ex) when (ex is not InvalidOperationException)
+            {
+                throw new InvalidOperationException("SimGym 图形环境预检查失败: " + ex.Message, ex);
+            }
         }
 
         private static void InitializeDataSource(string versionPath)

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using MapleLib.Img;
 
 namespace HaCreator.MapSimulator.Character
 {
@@ -191,9 +192,7 @@ namespace HaCreator.MapSimulator.Character
 
         public CharacterConfigManager(string configDirectory = null)
         {
-            _configDirectory = configDirectory ?? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "HaCreator", "Characters");
+            _configDirectory = configDirectory ?? Path.Combine(HaCreatorPaths.AppDataRoot, "Characters");
 
             // Ensure directory exists
             Directory.CreateDirectory(_configDirectory);

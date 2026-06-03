@@ -1266,6 +1266,63 @@ namespace HaCreator.MapSimulator.Character
             _inputJump = false;
         }
 
+        /// <summary>
+        /// Force the player into falling state while preserving horizontal intent.
+        /// Used by headless sim to make edge-drop transitions deterministic.
+        /// </summary>
+        public void ForceFall(float minDownwardVelocity = 0f)
+        {
+            if (State == PlayerState.Dead)
+                return;
+
+            Physics.DetachFromFoothold();
+            Physics.IsOnLadderOrRope = false;
+            Physics.CurrentJumpState = JumpState.Falling;
+            Physics.CurrentAction = MoveAction.Fall;
+            if (minDownwardVelocity > 0)
+            {
+                Physics.VelocityY = Math.Max(Physics.VelocityY, minDownwardVelocity);
+            }
+
+            State = PlayerState.Falling;
+            CurrentAction = CharacterAction.Jump;
+
+            // Prevent residual vertical input from snapping back into ladder/top-exit paths.
+            _inputUp = false;
+            _inputDown = false;
+            _inputJump = false;
+        }
+
+        /// <summary>
+        /// Force the player into a jump state.
+        /// Used by headless sim to break sticky foothold cases near upper-platform edges.
+        /// </summary>
+        public void ForceJump(float upwardVelocity, float horizontalVelocity = 0f)
+        {
+            if (State == PlayerState.Dead)
+                return;
+
+            Physics.DetachFromFoothold();
+            Physics.IsOnLadderOrRope = false;
+            Physics.CurrentJumpState = JumpState.Jumping;
+            Physics.CurrentAction = MoveAction.Jump;
+            Physics.VelocityY = -Math.Max(0f, upwardVelocity);
+            Physics.VelocityX = horizontalVelocity;
+
+            if (Math.Abs(horizontalVelocity) > 0.01f)
+            {
+                FacingRight = horizontalVelocity >= 0f;
+                Physics.FacingRight = FacingRight;
+            }
+
+            State = PlayerState.Jumping;
+            CurrentAction = CharacterAction.Jump;
+
+            _inputUp = false;
+            _inputDown = false;
+            _inputJump = false;
+        }
+
         #endregion
 
         #region Draw

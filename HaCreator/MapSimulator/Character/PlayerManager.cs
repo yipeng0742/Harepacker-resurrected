@@ -65,7 +65,7 @@ namespace HaCreator.MapSimulator.Character
 
         public PlayerManager(GraphicsDevice device, TexturePool texturePool)
         {
-            _device = device ?? throw new ArgumentNullException(nameof(device));
+            _device = device;
             _texturePool = texturePool;
 
             Input = new PlayerInput();
@@ -426,7 +426,8 @@ namespace HaCreator.MapSimulator.Character
                 return;
             }
 
-            // Apply input to player only if chat is not active and not gym controlled
+            // Gym 控制在 MapSimulator.Gym.cs 中已直接写入 Player.SetInput，
+            // 这里不要再 ClearInput 覆盖掉仿真输入。
             if (IsPlayerControlEnabled && !chatIsActive && !IsGymControlled)
             {
                 Input.ApplyToPlayer(Player);
@@ -484,7 +485,10 @@ namespace HaCreator.MapSimulator.Character
             }
             else
             {
-                Player.ClearInput();
+                if (!IsGymControlled)
+                {
+                    Player.ClearInput();
+                }
             }
 
             // Update player

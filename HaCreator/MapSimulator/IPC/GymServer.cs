@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json.Serialization;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -89,13 +90,21 @@ namespace HaCreator.MapSimulator.IPC
     /// </summary>
     public sealed class GymServer : IDisposable
     {
+        private static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        };
+
         private readonly object _sync = new object();
         private readonly ConcurrentQueue<string> _pendingStateLines = new ConcurrentQueue<string>();
+        private int _flushInProgress;
         private TcpListener _listener;
         private CancellationTokenSource _cts;
         private Task _acceptLoopTask;
         private TcpClient _activeClient;
         private StreamWriter _writer;
+        private DateTime _lastMomentaryJumpUtc = DateTime.MinValue;
 
         public GymAction PendingAction { get; private set; }
 
@@ -119,14 +128,91 @@ namespace HaCreator.MapSimulator.IPC
             }
         }
 
+        public GymAction SnapshotAction()
+        {
+            lock (_sync)
+            {
+                return PendingAction == null ? null : CloneAction(PendingAction);
+            }
+        }
+
+        public GymAction ConsumeMomentaryAction()
+        {
+            lock (_sync)
+            {
+                if (PendingAction == null)
+                {
+                    return null;
+                }
+
+                bool hasMomentary =
+                    PendingAction.Jump ||
+                    PendingAction.Attack ||
+                    PendingAction.Pickup ||
+                    PendingAction.Reset ||
+                    PendingAction.SkillSlot >= 0 ||
+                    !string.IsNullOrWhiteSpace(PendingAction.SkillToken);
+                if (!hasMomentary)
+                {
+                    return null;
+                }
+
+                var consumed = new GymAction
+                {
+                    Jump = PendingAction.Jump,
+                    Attack = PendingAction.Attack,
+                    Pickup = PendingAction.Pickup,
+                    Reset = PendingAction.Reset,
+                    SkillSlot = PendingAction.SkillSlot,
+                    SkillToken = PendingAction.SkillToken ?? "",
+                    TargetX = PendingAction.TargetX,
+                    TargetY = PendingAction.TargetY,
+                };
+
+                if (consumed.Jump)
+                {
+                    _lastMomentaryJumpUtc = DateTime.UtcNow;
+                }
+
+                PendingAction.Jump = false;
+                PendingAction.Attack = false;
+                PendingAction.Pickup = false;
+                PendingAction.Reset = false;
+                PendingAction.SkillSlot = -1;
+                PendingAction.SkillToken = "";
+                return consumed;
+            }
+        }
+
+        public bool HasRecentMomentaryJump(double windowMs = 220.0)
+        {
+            lock (_sync)
+            {
+                if (_lastMomentaryJumpUtc == DateTime.MinValue)
+                {
+                    return false;
+                }
+
+                return (DateTime.UtcNow - _lastMomentaryJumpUtc).TotalMilliseconds <= Math.Max(1.0, windowMs);
+            }
+        }
+
+        public void ClearRecentMomentaryJump()
+        {
+            lock (_sync)
+            {
+                _lastMomentaryJumpUtc = DateTime.MinValue;
+            }
+        }
+
         public void SendState(GymState state)
         {
             if (state == null)
                 return;
 
-            string line = JsonSerializer.Serialize(state);
+            string line = JsonSerializer.Serialize(state, JsonOptions);
             _pendingStateLines.Enqueue(line);
-            _ = FlushStatesAsync();
+            TryScheduleFlush();
         }
 
         private async Task AcceptLoopAsync(CancellationToken ct)
@@ -178,6 +264,7 @@ namespace HaCreator.MapSimulator.IPC
                     _writer?.Dispose();
                     _writer = null;
                     _activeClient = null;
+                    ClearPendingStateLines();
                 }
             }
 
@@ -195,12 +282,12 @@ namespace HaCreator.MapSimulator.IPC
 
                 try
                 {
-                    var action = JsonSerializer.Deserialize<GymAction>(line);
+                    var action = JsonSerializer.Deserialize<GymAction>(line, JsonOptions);
                     if (action != null)
                     {
                         lock (_sync)
                         {
-                            PendingAction = action;
+                            MergeAction(action);
                         }
                     }
                 }
@@ -211,27 +298,68 @@ namespace HaCreator.MapSimulator.IPC
             }
         }
 
+        private void TryScheduleFlush()
+        {
+            if (Interlocked.CompareExchange(ref _flushInProgress, 1, 0) != 0)
+            {
+                return;
+            }
+
+            _ = FlushStatesAsync();
+        }
+
         private async Task FlushStatesAsync()
         {
-            StreamWriter writer;
-            lock (_sync)
+            try
             {
-                writer = _writer;
-            }
-            if (writer == null)
-                return;
+                while (true)
+                {
+                    StreamWriter writer;
+                    lock (_sync)
+                    {
+                        writer = _writer;
+                    }
+                    if (writer == null)
+                    {
+                        ClearPendingStateLines();
+                        return;
+                    }
 
-            while (_pendingStateLines.TryDequeue(out var line))
+                    bool wroteAny = false;
+                    while (_pendingStateLines.TryDequeue(out var line))
+                    {
+                        wroteAny = true;
+                        try
+                        {
+                            await writer.WriteLineAsync(line).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            // Break on socket write error; next connection can continue.
+                            return;
+                        }
+                    }
+
+                    if (!wroteAny)
+                    {
+                        return;
+                    }
+                }
+            }
+            finally
             {
-                try
+                Interlocked.Exchange(ref _flushInProgress, 0);
+                if (!_pendingStateLines.IsEmpty)
                 {
-                    await writer.WriteLineAsync(line).ConfigureAwait(false);
+                    _ = Task.Run(() => TryScheduleFlush());
                 }
-                catch
-                {
-                    // Break on socket write error; next connection can continue.
-                    break;
-                }
+            }
+        }
+
+        private void ClearPendingStateLines()
+        {
+            while (_pendingStateLines.TryDequeue(out _))
+            {
             }
         }
 
@@ -263,6 +391,61 @@ namespace HaCreator.MapSimulator.IPC
                 _activeClient = null;
                 PendingAction = null;
             }
+        }
+
+        private void MergeAction(GymAction action)
+        {
+            if (action == null)
+            {
+                return;
+            }
+
+            PendingAction ??= new GymAction();
+
+            PendingAction.Left = action.Left;
+            PendingAction.Right = action.Right;
+            PendingAction.Up = action.Up;
+            PendingAction.Down = action.Down;
+            PendingAction.TargetX = action.TargetX;
+            PendingAction.TargetY = action.TargetY;
+
+            PendingAction.Jump = PendingAction.Jump || action.Jump;
+            PendingAction.Attack = PendingAction.Attack || action.Attack;
+            PendingAction.Pickup = PendingAction.Pickup || action.Pickup;
+            PendingAction.Reset = PendingAction.Reset || action.Reset;
+
+            if (action.SkillSlot >= 0)
+            {
+                PendingAction.SkillSlot = action.SkillSlot;
+            }
+            if (!string.IsNullOrWhiteSpace(action.SkillToken))
+            {
+                PendingAction.SkillToken = action.SkillToken;
+            }
+        }
+
+        private static GymAction CloneAction(GymAction action)
+        {
+            if (action == null)
+            {
+                return null;
+            }
+
+            return new GymAction
+            {
+                Left = action.Left,
+                Right = action.Right,
+                Up = action.Up,
+                Down = action.Down,
+                Jump = action.Jump,
+                Attack = action.Attack,
+                Pickup = action.Pickup,
+                Reset = action.Reset,
+                SkillSlot = action.SkillSlot,
+                SkillToken = action.SkillToken ?? "",
+                TargetX = action.TargetX,
+                TargetY = action.TargetY,
+            };
         }
     }
 }

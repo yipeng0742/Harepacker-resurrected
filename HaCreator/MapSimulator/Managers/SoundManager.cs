@@ -66,6 +66,7 @@ namespace HaCreator.MapSimulator.Managers
         public void PlaySound(string name)
         {
             if (_disposed) return;
+            if (_volume <= 0f) return;
 
             if (!_soundSources.TryGetValue(name, out var soundSource))
             {

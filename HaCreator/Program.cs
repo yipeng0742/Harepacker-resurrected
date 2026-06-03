@@ -211,6 +211,14 @@ namespace HaCreator
                 return;
             }
 
+            if (SimGraphicsProbeCliRunner.IsSimGraphicsProbeMode(args))
+            {
+                IsHeadlessAutomationMode = true;
+                int exitCode = SimGraphicsProbeCliRunner.Run(args);
+                Environment.Exit(exitCode);
+                return;
+            }
+
             if (WzImgExportCliRunner.IsWzImgExportMode(args))
             {
                 IsHeadlessAutomationMode = true;

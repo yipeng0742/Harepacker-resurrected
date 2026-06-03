@@ -23,11 +23,17 @@ namespace HaCreator.MapSimulator
         private bool _gymPrevReset;
         private int _gymPrevSkillSlot = -1;
         private string _gymPrevSkillToken = "";
+        private int _gymLastMapId = -1;
+        private bool _gymSpawnSettled;
+        private int _gymSpawnStableFrames;
+        private int _gymSpawnAdjustAttempts;
 
         public void EnableGymControl(int port)
         {
             _gymPort = port;
             _gymEnabled = port > 0;
+            ResetGymSpawnStabilizer();
+            EnsureGymServerStarted();
         }
 
         private void EnsureGymServerStarted()
@@ -64,7 +70,128 @@ namespace HaCreator.MapSimulator
 
             EnsureGymServerStarted();
             _playerManager.IsGymControlled = true;
+            SyncGymSpawnStabilizerMap();
+            if (!EnsureGymSpawnStable())
+            {
+                _playerManager.Player?.ClearInput();
+                return;
+            }
             ApplyGymAction(currentTime);
+        }
+
+        private void ResetGymSpawnStabilizer()
+        {
+            _gymSpawnSettled = false;
+            _gymSpawnStableFrames = 0;
+            _gymSpawnAdjustAttempts = 0;
+        }
+
+        private void SyncGymSpawnStabilizerMap()
+        {
+            int mapId = _mapBoard?.MapInfo?.id ?? 0;
+            if (mapId == _gymLastMapId)
+            {
+                return;
+            }
+
+            _gymLastMapId = mapId;
+            ResetGymSpawnStabilizer();
+        }
+
+        private bool EnsureGymSpawnStable()
+        {
+            if (_gymSpawnSettled || _playerManager == null || _playerManager.Player == null)
+            {
+                return _gymSpawnSettled;
+            }
+
+            var player = _playerManager.Player;
+            var physics = player.Physics;
+            float playerX = player.X;
+            float playerY = player.Y;
+
+            FootholdLine currentFh = physics?.CurrentFoothold;
+            if (currentFh == null)
+            {
+                try
+                {
+                    currentFh = _playerManager.GetFootholdLookup()?.Invoke(playerX, playerY, 120f);
+                }
+                catch
+                {
+                }
+            }
+
+            float resolvedFhGap = float.MaxValue;
+            if (currentFh == null)
+            {
+                currentFh = ResolveGymFoothold(playerX, playerY, 120f, out resolvedFhGap);
+            }
+
+            bool isGrounded = physics?.IsOnFoothold() ?? false;
+            if (!isGrounded && currentFh != null && resolvedFhGap <= 8f)
+            {
+                isGrounded = true;
+            }
+
+            PortalItem overlapPortal = _portalPool?.CheckPortalCollision(playerX, playerY);
+            bool portalOverlap = overlapPortal != null;
+
+            if (!isGrounded && currentFh != null)
+            {
+                _playerManager.TeleportTo(playerX, playerY);
+                _playerManager.ForceStand();
+                _gymSpawnStableFrames = 0;
+                _gymSpawnAdjustAttempts++;
+                return false;
+            }
+
+            if (portalOverlap && currentFh != null)
+            {
+                float fhMinX = Math.Min(currentFh.FirstDot.X, currentFh.SecondDot.X);
+                float fhMaxX = Math.Max(currentFh.FirstDot.X, currentFh.SecondDot.X);
+                float leftRoom = Math.Max(0f, playerX - fhMinX);
+                float rightRoom = Math.Max(0f, fhMaxX - playerX);
+                const float portalClearanceX = 64f;
+                const float edgeMarginX = 8f;
+                float targetX;
+                if (rightRoom >= leftRoom)
+                {
+                    targetX = Math.Min(fhMaxX - edgeMarginX, playerX + portalClearanceX);
+                }
+                else
+                {
+                    targetX = Math.Max(fhMinX + edgeMarginX, playerX - portalClearanceX);
+                }
+
+                if (Math.Abs(targetX - playerX) >= 2f)
+                {
+                    _playerManager.TeleportTo(targetX, playerY);
+                    _playerManager.ForceStand();
+                    _gymSpawnStableFrames = 0;
+                    _gymSpawnAdjustAttempts++;
+                    return false;
+                }
+            }
+
+            if (isGrounded && !portalOverlap)
+            {
+                _gymSpawnStableFrames++;
+                if (_gymSpawnStableFrames >= 3)
+                {
+                    _gymSpawnSettled = true;
+                    _playerManager.ForceStand();
+                    if (_gymSpawnAdjustAttempts > 0)
+                    {
+                        Console.WriteLine($"[SimGym] spawn stabilized map={_gymLastMapId} attempts={_gymSpawnAdjustAttempts}");
+                    }
+                    return true;
+                }
+                return false;
+            }
+
+            _gymSpawnStableFrames = 0;
+            return false;
         }
 
         private void EndGymControlFrame()
@@ -79,7 +206,8 @@ namespace HaCreator.MapSimulator
 
         private void ApplyGymAction(int currentTime)
         {
-            GymAction action = _gymServer?.PendingAction;
+            GymAction action = _gymServer?.SnapshotAction();
+            GymAction momentary = _gymServer?.ConsumeMomentaryAction();
             var player = _playerManager?.Player;
             if (action == null || player == null)
             {
@@ -91,17 +219,36 @@ namespace HaCreator.MapSimulator
             bool right = action.Right && !action.Left;
             bool up = action.Up;
             bool down = action.Down;
-            bool jump = action.Jump;
-            bool attack = action.Attack;
-            bool pickup = action.Pickup;
+            bool jump = (momentary?.Jump ?? false) || action.Jump;
+            bool attack = (momentary?.Attack ?? false) || action.Attack;
+            bool pickup = (momentary?.Pickup ?? false) || action.Pickup;
 
             player.SetInput(left, right, up, down, jump, attack, pickup);
 
-            if (action.Reset && !_gymPrevReset)
+            bool reset = (momentary?.Reset ?? false) || action.Reset;
+            if (reset && !_gymPrevReset)
             {
-                _playerManager.Respawn();
+                bool usedTargetRespawn = false;
+                if (_playerManager != null)
+                {
+                    float tx = action.TargetX;
+                    float ty = action.TargetY;
+                    if (!float.IsNaN(tx) && !float.IsInfinity(tx) && !float.IsNaN(ty) && !float.IsInfinity(ty))
+                    {
+                        _playerManager.RespawnAt(tx, ty);
+                        _playerManager.ForceStand();
+                        ResetGymSpawnStabilizer();
+                        usedTargetRespawn = true;
+                    }
+                }
+                if (!usedTargetRespawn)
+                {
+                    _playerManager.Respawn();
+                    _playerManager.ForceStand();
+                    ResetGymSpawnStabilizer();
+                }
             }
-            _gymPrevReset = action.Reset;
+            _gymPrevReset = reset;
 
             if (pickup && !_gymPrevPickup)
             {
@@ -109,8 +256,10 @@ namespace HaCreator.MapSimulator
             }
             _gymPrevPickup = pickup;
 
-            int skillSlot = action.SkillSlot;
-            string skillToken = action.SkillToken ?? "";
+            int skillSlot = (momentary?.SkillSlot ?? -1) >= 0 ? momentary.SkillSlot : action.SkillSlot;
+            string skillToken = !string.IsNullOrWhiteSpace(momentary?.SkillToken)
+                ? momentary.SkillToken
+                : (action.SkillToken ?? "");
             bool skillChanged = skillSlot != _gymPrevSkillSlot || !string.Equals(skillToken, _gymPrevSkillToken, StringComparison.Ordinal);
             if (skillChanged && (_playerManager.Skills != null))
             {
@@ -235,6 +384,28 @@ namespace HaCreator.MapSimulator
             float playerY = player?.Y ?? 0f;
             FootholdLine currentFh = physics?.CurrentFoothold;
             FootholdLine fallStartFh = physics?.FallStartFoothold;
+            if (currentFh == null)
+            {
+                try
+                {
+                    currentFh = _playerManager?.GetFootholdLookup()?.Invoke(playerX, playerY, 120f);
+                }
+                catch
+                {
+                }
+            }
+
+            float resolvedFhGap = float.MaxValue;
+            if (currentFh == null)
+            {
+                currentFh = ResolveGymFoothold(playerX, playerY, 120f, out resolvedFhGap);
+            }
+
+            bool isGrounded = physics?.IsOnFoothold() ?? false;
+            if (!isGrounded && currentFh != null && resolvedFhGap <= 8f)
+            {
+                isGrounded = true;
+            }
             float platformMinX = 0f;
             float platformMaxX = 0f;
             float distLeftEdge = 0f;
@@ -267,7 +438,7 @@ namespace HaCreator.MapSimulator
                 MaxHp = player?.MaxHP ?? 0,
                 Mp = player?.MP ?? 0,
                 MaxMp = player?.MaxMP ?? 0,
-                IsGrounded = physics?.IsOnFoothold() ?? false,
+                IsGrounded = isGrounded,
                 FacingRight = player?.FacingRight ?? true,
                 CurrentFhId = currentFh?.num ?? -1,
                 FallStartFhId = fallStartFh?.num ?? -1,
@@ -291,6 +462,54 @@ namespace HaCreator.MapSimulator
                 IsOverlappingPortal = portalOverlap,
                 Mobs = BuildGymMobStates(playerX, playerY),
             };
+        }
+
+        private FootholdLine ResolveGymFoothold(float x, float y, float searchRange, out float bestAbsDist)
+        {
+            bestAbsDist = float.MaxValue;
+            var footholds = _mapBoard?.BoardItems?.FootholdLines;
+            if (footholds == null || footholds.Count == 0)
+            {
+                return null;
+            }
+
+            FootholdLine bestFh = null;
+            const float upwardTolerance = 10f;
+            const float edgeTolerance = 2f;
+
+            foreach (var fh in footholds)
+            {
+                if (fh == null || fh.IsWall)
+                {
+                    continue;
+                }
+
+                float fhMinX = Math.Min(fh.FirstDot.X, fh.SecondDot.X) - edgeTolerance;
+                float fhMaxX = Math.Max(fh.FirstDot.X, fh.SecondDot.X) + edgeTolerance;
+                if (x < fhMinX || x > fhMaxX)
+                {
+                    continue;
+                }
+
+                float dx = fh.SecondDot.X - fh.FirstDot.X;
+                float dy = fh.SecondDot.Y - fh.FirstDot.Y;
+                float t = (Math.Abs(dx) > 0.0001f) ? (x - fh.FirstDot.X) / dx : 0f;
+                t = Math.Max(0f, Math.Min(1f, t));
+                float fhY = fh.FirstDot.Y + t * dy;
+                float dist = fhY - y;
+                float absDist = Math.Abs(dist);
+
+                if ((dist >= 0f && dist <= searchRange) || (dist < 0f && -dist <= upwardTolerance))
+                {
+                    if (absDist < bestAbsDist)
+                    {
+                        bestAbsDist = absDist;
+                        bestFh = fh;
+                    }
+                }
+            }
+
+            return bestFh;
         }
 
         private GymMobState[] BuildGymMobStates(float playerX, float playerY)
