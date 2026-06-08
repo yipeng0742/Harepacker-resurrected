@@ -71,12 +71,71 @@ namespace HaCreator.MapSimulator
             EnsureGymServerStarted();
             _playerManager.IsGymControlled = true;
             SyncGymSpawnStabilizerMap();
+            if (!EnsureGymPlayerRecoveredFromOutOfBounds())
+            {
+                _playerManager.Player?.ClearInput();
+                return;
+            }
             if (!EnsureGymSpawnStable())
             {
                 _playerManager.Player?.ClearInput();
                 return;
             }
             ApplyGymAction(currentTime);
+        }
+
+        private bool EnsureGymPlayerRecoveredFromOutOfBounds()
+        {
+            var player = _playerManager?.Player;
+            if (player == null)
+            {
+                return false;
+            }
+
+            float playerX = player.X;
+            float playerY = player.Y;
+            if (float.IsNaN(playerX) || float.IsInfinity(playerX) || float.IsNaN(playerY) || float.IsInfinity(playerY))
+            {
+                AutoRecoverGymPlayer("INVALID_POSITION", playerX, playerY);
+                return false;
+            }
+
+            if (!player.IsAlive)
+            {
+                AutoRecoverGymPlayer("PLAYER_DEAD", playerX, playerY);
+                return false;
+            }
+
+            var rawVr = _mapBoard?.VRRectangle;
+            float mapLeft = rawVr?.X ?? (_mapBoard?.CenterPoint.X - 5000f ?? -5000f);
+            float mapRight = rawVr != null ? rawVr.X + rawVr.Width : (_mapBoard?.CenterPoint.X + 5000f ?? 5000f);
+            float mapBottom = rawVr != null ? rawVr.Y + rawVr.Height : (_mapBoard?.CenterPoint.Y + 5000f ?? 5000f);
+            const float horizontalOutMargin = 320f;
+            const float bottomOutMargin = 240f;
+
+            bool outOfHorizontalBounds = playerX < mapLeft - horizontalOutMargin || playerX > mapRight + horizontalOutMargin;
+            bool outOfBottomBounds = playerY > mapBottom + bottomOutMargin;
+            if (outOfHorizontalBounds || outOfBottomBounds)
+            {
+                AutoRecoverGymPlayer(outOfBottomBounds ? "OUT_OF_MAP_BOTTOM" : "OUT_OF_MAP_HORIZONTAL", playerX, playerY);
+                return false;
+            }
+
+            return true;
+        }
+
+        private void AutoRecoverGymPlayer(string reason, float playerX, float playerY)
+        {
+            if (_playerManager == null)
+            {
+                return;
+            }
+
+            Console.WriteLine($"[SimGym] auto respawn map={_gymLastMapId} reason={reason} x={playerX:0.0} y={playerY:0.0}");
+            _playerManager.Respawn();
+            _playerManager.ForceStand();
+            _playerManager.Player?.ClearInput();
+            ResetGymSpawnStabilizer();
         }
 
         private void ResetGymSpawnStabilizer()
@@ -215,13 +274,21 @@ namespace HaCreator.MapSimulator
                 return;
             }
 
-            bool left = action.Left && !action.Right;
-            bool right = action.Right && !action.Left;
-            bool up = action.Up;
-            bool down = action.Down;
+            bool left = (action.Left || (momentary?.Left ?? false)) && !(action.Right || (momentary?.Right ?? false));
+            bool right = (action.Right || (momentary?.Right ?? false)) && !(action.Left || (momentary?.Left ?? false));
+            bool up = action.Up || (momentary?.Up ?? false);
+            bool down = action.Down || (momentary?.Down ?? false);
             bool jump = (momentary?.Jump ?? false) || action.Jump;
             bool attack = (momentary?.Attack ?? false) || action.Attack;
             bool pickup = (momentary?.Pickup ?? false) || action.Pickup;
+
+            if (jump || down)
+            {
+                Console.WriteLine(
+                    $"[SimGym.Action] tick={_gymTick} left={left} right={right} up={up} down={down} " +
+                    $"jump={jump} action_down={action.Down} action_jump={action.Jump} " +
+                    $"momentary_down={(momentary?.Down ?? false)} momentary_jump={(momentary?.Jump ?? false)}");
+            }
 
             player.SetInput(left, right, up, down, jump, attack, pickup);
 
@@ -460,6 +527,13 @@ namespace HaCreator.MapSimulator
                 NearestPortalY = nearestPortal?.PortalInstance?.Y ?? 0f,
                 PortalOverlap = portalOverlap,
                 IsOverlappingPortal = portalOverlap,
+                IsInSwimArea = physics?.IsInSwimArea ?? false,
+                IsJumpingDown = physics?.IsJumpingDown ?? false,
+                CurrentFhCantThrough = currentFh?.CantThrough == MapleLib.WzLib.WzStructure.MapleBool.True,
+                PhysicsMoveAction = (physics?.CurrentAction ?? Physics.MoveAction.Stand).ToString(),
+                PhysicsJumpState = (physics?.CurrentJumpState ?? Physics.JumpState.None).ToString(),
+                PlayerState = (player?.State ?? Character.PlayerState.Standing).ToString(),
+                CharacterAction = (player?.CurrentAction ?? HaCreator.MapSimulator.Character.CharacterAction.Stand1).ToString(),
                 Mobs = BuildGymMobStates(playerX, playerY),
             };
         }

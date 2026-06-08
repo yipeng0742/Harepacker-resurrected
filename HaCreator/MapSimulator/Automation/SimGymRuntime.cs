@@ -8,6 +8,7 @@ namespace HaCreator.MapSimulator.Automation
         public bool EnableGraphicsDiagnostics { get; set; } = true;
         public bool MuteAudio { get; set; } = true;
         public bool DisableLocalHotkeys { get; set; } = true;
+        public bool ShowWindow { get; set; } = false;
     }
 
     internal static class SimGymRuntime
@@ -28,5 +29,7 @@ namespace HaCreator.MapSimulator.Automation
         internal static bool MuteAudio => _current?.MuteAudio == true;
 
         internal static bool DisableLocalHotkeys => _current?.DisableLocalHotkeys == true;
+
+        internal static bool ShowWindow => _current?.ShowWindow == true;
     }
 }

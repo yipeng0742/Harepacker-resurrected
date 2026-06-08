@@ -318,10 +318,10 @@ namespace HaCreator.MapSimulator.Automation
                     return;
                 }
 
-                bool left = action.Left && !action.Right;
-                bool right = action.Right && !action.Left;
-                bool up = action.Up;
-                bool down = action.Down;
+                bool left = (action.Left || (momentary?.Left ?? false)) && !(action.Right || (momentary?.Right ?? false));
+                bool right = (action.Right || (momentary?.Right ?? false)) && !(action.Left || (momentary?.Left ?? false));
+                bool up = action.Up || (momentary?.Up ?? false);
+                bool down = action.Down || (momentary?.Down ?? false);
                 bool jump = (momentary?.Jump ?? false) || action.Jump;
                 bool attack = (momentary?.Attack ?? false) || action.Attack;
                 bool pickup = (momentary?.Pickup ?? false) || action.Pickup;
@@ -330,16 +330,29 @@ namespace HaCreator.MapSimulator.Automation
                 _inputUp = up;
                 _inputDown = down;
 
+                if (jump || down)
+                {
+                    Console.WriteLine(
+                        $"[SimHeadless.Action] tick={_tick} left={left} right={right} up={up} down={down} " +
+                        $"jump={jump} action_down={action.Down} action_jump={action.Jump} " +
+                        $"momentary_down={(momentary?.Down ?? false)} momentary_jump={(momentary?.Jump ?? false)} " +
+                        $"player_state={player.State} fh={physics?.CurrentFoothold?.num ?? -1}");
+                }
+
                 AssistLadderGrab(player, jump);
                 if (jump && physics != null && !physics.IsOnLadderOrRope)
                 {
                     int jumpDir = right ? 1 : (left ? -1 : 0);
-                    if (jumpDir != 0)
+                    if (jumpDir != 0 && !down)
                     {
                         var jumpSourceFh = physics.CurrentFoothold
                             ?? FindNearestStandableFoothold(player.X, player.Y, 28f, 20f)
                             ?? FindFoothold(player.X, player.Y, 32f);
                         RegisterRecentJumpAssist(jumpSourceFh, jumpDir);
+                    }
+                    else if (down)
+                    {
+                        ResetRecentJumpAssist();
                     }
                 }
                 player.SetInput(left, right, up, down, jump, attack, pickup);
@@ -537,6 +550,11 @@ namespace HaCreator.MapSimulator.Automation
                     return false;
                 }
 
+                if (physics.IsJumpingDown)
+                {
+                    return false;
+                }
+
                 bool hasRecentJump = _gymServer.HasRecentMomentaryJump(windowMs: 420.0) || _recentJumpAssistTicks > 0;
                 if (!hasRecentJump)
                 {
@@ -635,6 +653,11 @@ namespace HaCreator.MapSimulator.Automation
             private bool TryResolveLatchedUpperJumpAssist(PlayerCharacter player, CVecCtrl physics)
             {
                 if (player == null || physics == null)
+                {
+                    return false;
+                }
+
+                if (physics.IsJumpingDown)
                 {
                     return false;
                 }
@@ -981,10 +1004,21 @@ namespace HaCreator.MapSimulator.Automation
                     return;
                 }
 
-                var landingFh = FindNearestStandableFoothold(player.X, player.Y - 6f, 48f, 36f)
-                    ?? FindFoothold(player.X, player.Y - 6f, 36f);
+                var landingFh = FindFoothold(player.X, player.Y - 6f, 36f)
+                    ?? FindNearestStandableFoothold(player.X, player.Y - 6f, 48f, 8f);
                 if (landingFh == null)
                 {
+                    return;
+                }
+
+                if (!IsWithinFootholdSpan(landingFh, player.X, 8f))
+                {
+                    if (physics.IsJumpingDown)
+                    {
+                        Console.WriteLine(
+                            $"[SimHeadless.NearbyLanding] tick={_tick} skip_outside_span fh={landingFh.num} " +
+                            $"x={player.X:F1} y={player.Y:F1} vy={(float)physics.VelocityY:F1} jumping_down={physics.IsJumpingDown}");
+                    }
                     return;
                 }
 
@@ -1001,6 +1035,25 @@ namespace HaCreator.MapSimulator.Automation
                     }
                 }
 
+                if (physics.IsJumpingDown && physics.FallStartFoothold != null)
+                {
+                    var sourceFh = physics.FallStartFoothold;
+                    bool sameSourceBand = landingFh == sourceFh || IsSamePlatformBand(sourceFh, landingFh, player.X);
+                    float sourceY = Board.CalculateYOnFoothold(sourceFh, player.X);
+                    bool clearedSourceBand = player.Y >= sourceY + 20f;
+                    bool leftSourceBand =
+                        player.X <= Math.Min(sourceFh.FirstDot.X, sourceFh.SecondDot.X) - 18f ||
+                        player.X >= Math.Max(sourceFh.FirstDot.X, sourceFh.SecondDot.X) + 18f;
+                    if (sameSourceBand && !clearedSourceBand && !leftSourceBand)
+                    {
+                        Console.WriteLine(
+                            $"[SimHeadless.NearbyLanding] tick={_tick} suppress_jump_down_same_band landing={landingFh.num} " +
+                            $"source={sourceFh.num} x={player.X:F1} y={player.Y:F1} source_y={sourceY:F1} " +
+                            $"cleared={clearedSourceBand} left_band={leftSourceBand}");
+                        return;
+                    }
+                }
+
                 float landingY = Board.CalculateYOnFoothold(landingFh, player.X);
                 float yError = player.Y - landingY;
                 bool closeEnough = yError >= -6f && yError <= 14f;
@@ -1009,6 +1062,10 @@ namespace HaCreator.MapSimulator.Automation
                     return;
                 }
 
+                Console.WriteLine(
+                    $"[SimHeadless.NearbyLanding] tick={_tick} land fh={landingFh.num} x={player.X:F1} y={player.Y:F1} " +
+                    $"landing_y={landingY:F1} y_error={yError:F1} vy={(float)physics.VelocityY:F1} " +
+                    $"jumping_down={physics.IsJumpingDown} fall_start={(physics.FallStartFoothold?.num ?? -1)}");
                 physics.LandOnFoothold(landingFh);
                 player.SetPosition(player.X, landingY);
                 _edgeDropSourceFoothold = null;
@@ -1017,6 +1074,45 @@ namespace HaCreator.MapSimulator.Automation
                 {
                     _playerManager.ForceStand();
                 }
+            }
+
+            private bool IsSamePlatformBand(FootholdLine sourceFh, FootholdLine candidateFh, float probeX)
+            {
+                if (sourceFh == null || candidateFh == null)
+                {
+                    return false;
+                }
+
+                if (ReferenceEquals(sourceFh, candidateFh))
+                {
+                    return true;
+                }
+
+                if (sourceFh.IsWall || candidateFh.IsWall)
+                {
+                    return false;
+                }
+
+                if (sourceFh.LayerNumber != candidateFh.LayerNumber || sourceFh.PlatformNumber != candidateFh.PlatformNumber)
+                {
+                    return false;
+                }
+
+                float sourceY = Board.CalculateYOnFoothold(sourceFh, probeX);
+                float candidateY = Board.CalculateYOnFoothold(candidateFh, probeX);
+                return Math.Abs(sourceY - candidateY) <= 6f;
+            }
+
+            private bool IsWithinFootholdSpan(FootholdLine fh, float x, float tolerance)
+            {
+                if (fh == null)
+                {
+                    return false;
+                }
+
+                float minX = Math.Min(fh.FirstDot.X, fh.SecondDot.X);
+                float maxX = Math.Max(fh.FirstDot.X, fh.SecondDot.X);
+                return x >= minX - tolerance && x <= maxX + tolerance;
             }
 
             private bool TryResolveEdgeDrop(PlayerCharacter player, CVecCtrl physics, FootholdLine currentFh, float currentY)
@@ -1371,6 +1467,13 @@ namespace HaCreator.MapSimulator.Automation
                     NearestPortalY = nearestPortal?.PortalInstance?.Y ?? 0f,
                     PortalOverlap = portalOverlap,
                     IsOverlappingPortal = portalOverlap,
+                    IsInSwimArea = physics?.IsInSwimArea ?? false,
+                    IsJumpingDown = physics?.IsJumpingDown ?? false,
+                    CurrentFhCantThrough = platformFh?.CantThrough == MapleLib.WzLib.WzStructure.MapleBool.True,
+                    PhysicsMoveAction = (physics?.CurrentAction ?? HaCreator.MapSimulator.Physics.MoveAction.Stand).ToString(),
+                    PhysicsJumpState = (physics?.CurrentJumpState ?? HaCreator.MapSimulator.Physics.JumpState.None).ToString(),
+                    PlayerState = (player?.State ?? HaCreator.MapSimulator.Character.PlayerState.Standing).ToString(),
+                    CharacterAction = (player?.CurrentAction ?? HaCreator.MapSimulator.Character.CharacterAction.Stand1).ToString(),
                     Mobs = BuildGymMobStates(px, py),
                 };
             }

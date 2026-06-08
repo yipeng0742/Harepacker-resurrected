@@ -624,10 +624,17 @@ namespace HaCreator.MapSimulator.Physics
         public bool JumpDown()
         {
             if (!IsOnFoothold())
+            {
+                Console.WriteLine(
+                    $"[CVecCtrl.JumpDown] skip reason=not_on_foothold x={X:F1} y={Y:F1} " +
+                    $"swim={IsInSwimArea} jump_state={CurrentJumpState} move_action={CurrentAction}");
                 return false;
+            }
 
             // Record the foothold we're jumping down from
             // The landing detection will skip this foothold until we pass it
+            int currentFhNum = CurrentFoothold?.num ?? -1;
+            bool currentCantThrough = CurrentFoothold?.CantThrough == MapleLib.WzLib.WzStructure.MapleBool.True;
             FallStartFoothold = CurrentFoothold;
             CurrentFoothold = null;
 
@@ -643,6 +650,11 @@ namespace HaCreator.MapSimulator.Physics
             // Clear knockback state since this is a voluntary action
             IsInKnockback = false;
             _knockbackTimeRemaining = 0;
+
+            Console.WriteLine(
+                $"[CVecCtrl.JumpDown] ok fh={currentFhNum} cant_through={currentCantThrough} x={X:F1} y={Y:F1} " +
+                $"swim={IsInSwimArea} jumping_down={IsJumpingDown} fall_start={FallStartFoothold?.num ?? -1} " +
+                $"vy={VelocityY:F1} jump_state={CurrentJumpState} move_action={CurrentAction}");
 
             return true;
         }

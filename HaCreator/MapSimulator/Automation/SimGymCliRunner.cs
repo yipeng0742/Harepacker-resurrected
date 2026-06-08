@@ -26,7 +26,15 @@ namespace HaCreator.MapSimulator.Automation
         {
             try
             {
-                if (!TryParseArgs(args, out int mapId, out int gymPort, out string versionPath, out string spawnPortal, out string resolutionName, out string error))
+                if (!TryParseArgs(
+                    args,
+                    out int mapId,
+                    out int gymPort,
+                    out string versionPath,
+                    out string spawnPortal,
+                    out string resolutionName,
+                    out bool showWindow,
+                    out string error))
                 {
                     Console.Error.WriteLine("[SimGym] " + error);
                     PrintUsage();
@@ -35,7 +43,7 @@ namespace HaCreator.MapSimulator.Automation
 
                 if (string.IsNullOrWhiteSpace(versionPath) || !Directory.Exists(versionPath) || !File.Exists(Path.Combine(versionPath, "manifest.json")))
                 {
-                    Console.Error.WriteLine($"[SimGym] version_path 无效: {versionPath}");
+                    Console.Error.WriteLine($"[SimGym] version_path 鏃犳晥: {versionPath}");
                     return 2;
                 }
 
@@ -44,13 +52,13 @@ namespace HaCreator.MapSimulator.Automation
 
                 if (!MapImgFileExists(mapId))
                 {
-                    Console.Error.WriteLine($"[SimGym] 地图文件不存在: {mapId:D9}");
+                    Console.Error.WriteLine($"[SimGym] 鍦板浘鏂囦欢涓嶅瓨鍦? {mapId:D9}");
                     return 2;
                 }
 
                 if (!TryResolveResolution(resolutionName, out RenderResolution resolution))
                 {
-                    Console.Error.WriteLine($"[SimGym] 不支持的分辨率: {resolutionName}");
+                    Console.Error.WriteLine($"[SimGym] 涓嶆敮鎸佺殑鍒嗚鲸鐜? {resolutionName}");
                     return 2;
                 }
 
@@ -58,24 +66,32 @@ namespace HaCreator.MapSimulator.Automation
                 Board board = LoadBoardForMap(mapId);
                 if (board == null)
                 {
-                    Console.Error.WriteLine($"[SimGym] 构建地图失败: {mapId:D9}");
+                    Console.Error.WriteLine($"[SimGym] 鏋勫缓鍦板浘澶辫触: {mapId:D9}");
                     return 2;
                 }
 
-                Console.WriteLine($"[SimGym] 启动 map={mapId:D9} port={gymPort} resolution={resolutionName}");
+                Console.WriteLine($"[SimGym] 鍚姩 map={mapId:D9} port={gymPort} resolution={resolutionName} show_window={showWindow}");
                 SimGymRuntime.Current = new SimGymRunOptions
                 {
                     UseCompatibleGraphics = true,
                     EnableGraphicsDiagnostics = true,
                     MuteAudio = HasFlag(args, "--mute-audio"),
                     DisableLocalHotkeys = HasFlag(args, "--disable-local-hotkeys"),
+                    ShowWindow = showWindow,
                 };
                 WriteEnvironmentDiagnostics(versionPath);
-                return SimHeadlessCliRunner.Run(board, gymPort, string.IsNullOrWhiteSpace(spawnPortal) ? null : spawnPortal);
+
+                string titleName = BuildSimWindowTitle(mapId, resolutionName);
+                string spawnPortalName = string.IsNullOrWhiteSpace(spawnPortal) ? null : spawnPortal;
+                if (showWindow)
+                {
+                    return RunVisibleSimulator(board, gymPort, titleName, spawnPortalName);
+                }
+                return SimHeadlessCliRunner.Run(board, gymPort, spawnPortalName);
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("[SimGym] 启动失败: " + ex);
+                Console.Error.WriteLine("[SimGym] 鍚姩澶辫触: " + ex);
                 return 1;
             }
             finally
@@ -92,6 +108,7 @@ namespace HaCreator.MapSimulator.Automation
             out string versionPath,
             out string spawnPortal,
             out string resolutionName,
+            out bool showWindow,
             out string error)
         {
             mapId = 0;
@@ -99,6 +116,7 @@ namespace HaCreator.MapSimulator.Automation
             versionPath = "";
             spawnPortal = "";
             resolutionName = "1366x768";
+            showWindow = false;
             error = "";
 
             for (int i = 0; i < args.Length; i++)
@@ -108,7 +126,7 @@ namespace HaCreator.MapSimulator.Automation
                 {
                     if (i + 1 >= args.Length || !int.TryParse(args[++i], out mapId) || mapId <= 0)
                     {
-                        error = "--sim-gym 需要合法 map_id";
+                        error = "--sim-gym 闇€瑕佸悎娉?map_id";
                         return false;
                     }
                     continue;
@@ -117,7 +135,7 @@ namespace HaCreator.MapSimulator.Automation
                 {
                     if (i + 1 >= args.Length || !int.TryParse(args[++i], out gymPort) || gymPort <= 0)
                     {
-                        error = "--gym-port 需要合法端口";
+                        error = "--gym-port 闇€瑕佸悎娉曠鍙?";
                         return false;
                     }
                     continue;
@@ -126,7 +144,7 @@ namespace HaCreator.MapSimulator.Automation
                 {
                     if (i + 1 >= args.Length)
                     {
-                        error = "--version-path 缺少路径";
+                        error = "--version-path 缂哄皯璺緞";
                         return false;
                     }
                     versionPath = args[++i];
@@ -136,7 +154,7 @@ namespace HaCreator.MapSimulator.Automation
                 {
                     if (i + 1 >= args.Length)
                     {
-                        error = "--spawn-portal 缺少传送门名";
+                        error = "--spawn-portal 缂哄皯浼犻€侀棬鍚?";
                         return false;
                     }
                     spawnPortal = args[++i];
@@ -146,21 +164,27 @@ namespace HaCreator.MapSimulator.Automation
                 {
                     if (i + 1 >= args.Length)
                     {
-                        error = "--resolution 缺少分辨率";
+                        error = "--resolution 缂哄皯鍒嗚鲸鐜?";
                         return false;
                     }
                     resolutionName = args[++i];
+                    continue;
+                }
+                if (arg.Equals("--show-window", StringComparison.OrdinalIgnoreCase))
+                {
+                    showWindow = true;
+                    continue;
                 }
             }
 
             if (mapId <= 0)
             {
-                error = "缺少 --sim-gym <map_id>";
+                error = "缂哄皯 --sim-gym <map_id>";
                 return false;
             }
             if (string.IsNullOrWhiteSpace(versionPath))
             {
-                error = "缺少 --version-path <img_fs_dir>";
+                error = "缂哄皯 --version-path <img_fs_dir>";
                 return false;
             }
             return true;
@@ -169,12 +193,41 @@ namespace HaCreator.MapSimulator.Automation
         private static void PrintUsage()
         {
             Console.WriteLine("Usage:");
-            Console.WriteLine("  HaCreator --sim-gym <map_id> --gym-port <port> --version-path <img_fs_dir> [--spawn-portal sp] [--resolution 1366x768] [--mute-audio] [--disable-local-hotkeys]");
+            Console.WriteLine("  HaCreator --sim-gym <map_id> --gym-port <port> --version-path <img_fs_dir> [--spawn-portal sp] [--resolution 1366x768] [--show-window] [--mute-audio] [--disable-local-hotkeys]");
+        }
+
+        private static string BuildSimWindowTitle(int mapId, string resolutionName)
+        {
+            string resolvedResolution = string.IsNullOrWhiteSpace(resolutionName) ? "1366x768" : resolutionName.Trim();
+            return $"SimGym-{mapId:D9}-{resolvedResolution}";
         }
 
         private static bool HasFlag(string[] args, string flag)
         {
             return args != null && args.Any(a => string.Equals(a, flag, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static int RunVisibleSimulator(Board board, int gymPort, string titleName, string spawnPortalName)
+        {
+            try
+            {
+                ValidateSimGraphicsEnvironment();
+                Console.WriteLine($"[SimGym] visible_stage=before_new_simulator map={board?.MapInfo?.id:D9} port={gymPort} title={titleName}");
+                using var simulator = new global::HaCreator.MapSimulator.MapSimulator(board, titleName, spawnPortalName);
+                Console.WriteLine($"[SimGym] visible_stage=after_new_simulator map={board?.MapInfo?.id:D9} port={gymPort}");
+                simulator.EnableGymControl(gymPort);
+                Console.WriteLine($"[SimGym] visible_stage=after_enable_gym map={board?.MapInfo?.id:D9} port={gymPort}");
+                Console.WriteLine($"[SimGym] 鍚姩鍙鍖栨ā鎷熷櫒 map={board?.MapInfo?.id:D9} port={gymPort} title={titleName}");
+                Console.WriteLine($"[SimGym] visible_stage=before_run map={board?.MapInfo?.id:D9} port={gymPort}");
+                simulator.Run();
+                Console.WriteLine($"[SimGym] visible_stage=after_run map={board?.MapInfo?.id:D9} port={gymPort}");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine("[SimGym] 鍙鍖栨ā鎷熷櫒鍚姩澶辫触: " + ex);
+                return 1;
+            }
         }
 
         private static void WriteEnvironmentDiagnostics(string versionPath)
@@ -223,7 +276,7 @@ namespace HaCreator.MapSimulator.Automation
                 var adapters = factory.Adapters1;
                 if (adapters == null || adapters.Length <= 0)
                 {
-                    throw new InvalidOperationException("DXGI 未枚举到任何适配器。");
+                    throw new InvalidOperationException("DXGI 鏈灇涓惧埌浠讳綍閫傞厤鍣ㄣ€?");
                 }
 
                 bool anyOutput = false;
@@ -241,19 +294,18 @@ namespace HaCreator.MapSimulator.Automation
                     }
                     catch (SharpDXException ex) when ((uint)ex.HResult == 0x887A0002u)
                     {
-                        // DXGI_ERROR_NOT_FOUND: 当前会话下该 adapter 没有关联显示输出。
                     }
                 }
 
                 if (!anyOutput)
                 {
                     throw new InvalidOperationException(
-                        "DXGI 适配器存在，但当前桌面会话下没有任何可用输出；MonoGame GraphicsAdapter 会在此环境下初始化失败。");
+                        "DXGI 閫傞厤鍣ㄥ瓨鍦紝浣嗗綋鍓嶆闈細璇濅笅娌℃湁浠讳綍鍙敤杈撳嚭锛汳onoGame GraphicsAdapter 浼氬湪姝ょ幆澧冧笅鍒濆鍖栧け璐ャ€?");
                 }
             }
             catch (Exception ex) when (ex is not InvalidOperationException)
             {
-                throw new InvalidOperationException("SimGym 图形环境预检查失败: " + ex.Message, ex);
+                throw new InvalidOperationException("SimGym 鍥惧舰鐜棰勬鏌ュけ璐? " + ex.Message, ex);
             }
         }
 
@@ -345,7 +397,7 @@ namespace HaCreator.MapSimulator.Automation
             mapImage ??= TryLoadMapImage(mapId);
             if (mapImage == null)
             {
-                Console.WriteLine($"[SimGym] map={mapId:D9} 运行时加载失败（文件存在={MapImgFileExists(mapId)}）");
+                Console.WriteLine($"[SimGym] map={mapId:D9} 杩愯鏃跺姞杞藉け璐ワ紙鏂囦欢瀛樺湪={MapImgFileExists(mapId)}锛?");
                 return null;
             }
             if (!mapImage.Parsed)

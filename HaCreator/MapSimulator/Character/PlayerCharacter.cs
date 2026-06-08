@@ -666,6 +666,11 @@ namespace HaCreator.MapSimulator.Character
 
         private void TryJump()
         {
+            Console.WriteLine(
+                $"[TryJump] down={_inputDown} left={_inputLeft} right={_inputRight} " +
+                $"state={State} on_fh={Physics.IsOnFoothold()} fh={Physics.CurrentFoothold?.num ?? -1} " +
+                $"vy={Physics.VelocityY:F1}");
+
             // Check for jump down first (Down + Jump while on foothold)
             // This works even while prone - character gets up and falls through
             if (_inputDown && Physics.IsOnFoothold())
@@ -695,6 +700,19 @@ namespace HaCreator.MapSimulator.Character
                 float jumpPower = (Build?.JumpPower ?? 100) / 100f;
                 Physics.VelocityY = -CVecCtrl.JumpVelocity * jumpPower;
 
+                // Ground directional jump:
+                // When jump is triggered together with a single horizontal direction,
+                // apply an immediate horizontal launch so sim/backend-controlled jumps
+                // don't degenerate into pure vertical jumps waiting for later air control.
+                if (_inputLeft ^ _inputRight)
+                {
+                    float direction = _inputRight ? 1f : -1f;
+                    float walkSpeed = Build?.Speed ?? 100f;
+                    Physics.VelocityX = walkSpeed * direction * 1.3f;
+                    FacingRight = _inputRight;
+                    Physics.FacingRight = _inputRight;
+                }
+
                 State = PlayerState.Jumping;
 
                 // Play jump sound
@@ -709,17 +727,30 @@ namespace HaCreator.MapSimulator.Character
         private void TryJumpDown()
         {
             if (!Physics.IsOnFoothold())
+            {
+                Console.WriteLine(
+                    $"[TryJumpDown] skip reason=not_on_foothold x={X:F1} y={Y:F1} " +
+                    $"swim={Physics.IsInSwimArea} jump_state={Physics.CurrentJumpState} move_action={Physics.CurrentAction}");
                 return;
+            }
 
             var currentFh = Physics.CurrentFoothold;
             if (currentFh == null)
+            {
+                Console.WriteLine(
+                    $"[TryJumpDown] skip reason=current_fh_null x={X:F1} y={Y:F1} " +
+                    $"swim={Physics.IsInSwimArea} jump_state={Physics.CurrentJumpState} move_action={Physics.CurrentAction}");
                 return;
+            }
 
             // Check if this foothold allows jumping through
             // CantThrough = true means you cannot jump down through this platform
             if (currentFh.CantThrough == MapleLib.WzLib.WzStructure.MapleBool.True)
             {
                 // Cannot jump down through this platform
+                Console.WriteLine(
+                    $"[TryJumpDown] skip reason=cant_through fh={currentFh.num} x={X:F1} y={Y:F1} " +
+                    $"swim={Physics.IsInSwimArea} jump_state={Physics.CurrentJumpState} move_action={Physics.CurrentAction}");
                 return;
             }
 
@@ -731,7 +762,17 @@ namespace HaCreator.MapSimulator.Character
                 // Play jump sound
                 _onJumpSound?.Invoke();
 
-                System.Diagnostics.Debug.WriteLine($"[TryJumpDown] Jump down initiated from foothold at Y={currentFh.FirstDot.Y}");
+                Console.WriteLine(
+                    $"[TryJumpDown] ok fh={currentFh.num} fh_y={currentFh.FirstDot.Y} x={X:F1} y={Y:F1} " +
+                    $"swim={Physics.IsInSwimArea} jumping_down={Physics.IsJumpingDown} " +
+                    $"fall_start={Physics.FallStartFoothold?.num ?? -1} vy={Physics.VelocityY:F1} " +
+                    $"jump_state={Physics.CurrentJumpState} move_action={Physics.CurrentAction}");
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"[TryJumpDown] fail fh={currentFh.num} x={X:F1} y={Y:F1} " +
+                    $"swim={Physics.IsInSwimArea} jump_state={Physics.CurrentJumpState} move_action={Physics.CurrentAction}");
             }
         }
 
@@ -785,6 +826,16 @@ namespace HaCreator.MapSimulator.Character
 
             if (fh != null)
             {
+                if (Physics.IsJumpingDown && Physics.FallStartFoothold != null)
+                {
+                    float sourceY = (float)CalculateYOnFoothold(Physics.FallStartFoothold, X);
+                    const float MIN_CLEAR_SOURCE_DROP = 30f;
+                    if (Physics.Y < sourceY + MIN_CLEAR_SOURCE_DROP)
+                    {
+                        return;
+                    }
+                }
+
                 // Check if we're falling through this foothold
                 if (Physics.FallStartFoothold != fh)
                 {
@@ -794,18 +845,9 @@ namespace HaCreator.MapSimulator.Character
                 }
                 else if (Physics.IsJumpingDown)
                 {
-                    // Jump-down: must fall below the foothold before landing on it again
-                    // Calculate Y on the foothold at our current X position
-                    var fallStartFh = Physics.FallStartFoothold;
-                    float fhY = (float)CalculateYOnFoothold(fallStartFh, X);
-
-                    // Require at least 30 pixels below the foothold to land on the same one
-                    const float MIN_FALL_DISTANCE = 30f;
-                    if (Physics.Y >= fhY + MIN_FALL_DISTANCE)
-                    {
-                        Physics.LandOnFoothold(fh);
-                        State = PlayerState.Standing;
-                    }
+                    // Down+jump 语义下，源平台应被完整穿过；本次下落期间不允许重新吸回起跳平台。
+                    // 真实落地应发生在后续不同 FH 的平台上，由正常落地逻辑处理。
+                    return;
                 }
                 else
                 {

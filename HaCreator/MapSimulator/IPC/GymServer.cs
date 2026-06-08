@@ -80,6 +80,13 @@ namespace HaCreator.MapSimulator.IPC
         public float NearestPortalY { get; set; }
         public bool PortalOverlap { get; set; }
         public bool IsOverlappingPortal { get; set; }
+        public bool IsInSwimArea { get; set; }
+        public bool IsJumpingDown { get; set; }
+        public bool CurrentFhCantThrough { get; set; }
+        public string PhysicsMoveAction { get; set; } = "";
+        public string PhysicsJumpState { get; set; } = "";
+        public string PlayerState { get; set; } = "";
+        public string CharacterAction { get; set; } = "";
         public GymMobState[] Mobs { get; set; } = Array.Empty<GymMobState>();
     }
 
@@ -105,6 +112,7 @@ namespace HaCreator.MapSimulator.IPC
         private TcpClient _activeClient;
         private StreamWriter _writer;
         private DateTime _lastMomentaryJumpUtc = DateTime.MinValue;
+        private GymAction _latchedJumpAction;
 
         public GymAction PendingAction { get; private set; }
 
@@ -125,6 +133,7 @@ namespace HaCreator.MapSimulator.IPC
             lock (_sync)
             {
                 PendingAction = null;
+                _latchedJumpAction = null;
             }
         }
 
@@ -171,7 +180,15 @@ namespace HaCreator.MapSimulator.IPC
 
                 if (consumed.Jump)
                 {
+                    if (_latchedJumpAction != null)
+                    {
+                        consumed.Left = _latchedJumpAction.Left;
+                        consumed.Right = _latchedJumpAction.Right;
+                        consumed.Up = _latchedJumpAction.Up;
+                        consumed.Down = _latchedJumpAction.Down;
+                    }
                     _lastMomentaryJumpUtc = DateTime.UtcNow;
+                    _latchedJumpAction = null;
                 }
 
                 PendingAction.Jump = false;
@@ -390,6 +407,7 @@ namespace HaCreator.MapSimulator.IPC
                 _activeClient?.Close();
                 _activeClient = null;
                 PendingAction = null;
+                _latchedJumpAction = null;
             }
         }
 
@@ -409,10 +427,18 @@ namespace HaCreator.MapSimulator.IPC
             PendingAction.TargetX = action.TargetX;
             PendingAction.TargetY = action.TargetY;
 
+            bool jumpWasPending = PendingAction.Jump;
             PendingAction.Jump = PendingAction.Jump || action.Jump;
             PendingAction.Attack = PendingAction.Attack || action.Attack;
             PendingAction.Pickup = PendingAction.Pickup || action.Pickup;
             PendingAction.Reset = PendingAction.Reset || action.Reset;
+
+            // Jump 为 momentary 信号；只在“本次 jump 首次进入 pending”时锁存方向，
+            // 避免后续 key_up(down/right/left) 报文把组合键语义覆盖掉。
+            if (action.Jump && !jumpWasPending)
+            {
+                _latchedJumpAction = CloneAction(action);
+            }
 
             if (action.SkillSlot >= 0)
             {

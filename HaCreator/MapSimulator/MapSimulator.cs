@@ -41,6 +41,8 @@ using HaCreator.MapSimulator.Effects;
 using HaCreator.MapSimulator.Fields;
 using HaCreator.MapSimulator.Managers;
 using HaCreator.MapSimulator.Core;
+using HaCreator.MapSimulator.Automation;
+using HaCreator.MapSimulator.Automation;
 
 namespace HaCreator.MapSimulator
 {
@@ -521,7 +523,7 @@ namespace HaCreator.MapSimulator
             _gameState.IsBigBang2Update = WzFileManager.IsBigBang2Update(uiWindow2Image); // chaos update
 
             // BGM
-            if (Program.InfoManager.BGMs.ContainsKey(_mapBoard.MapInfo.bgm))
+            if (!SimGymRuntime.MuteAudio && Program.InfoManager.BGMs.ContainsKey(_mapBoard.MapInfo.bgm))
             {
                 _currentBgmName = _mapBoard.MapInfo.bgm;
                 _audio = new WzSoundResourceStreamer(Program.InfoManager.BGMs[_mapBoard.MapInfo.bgm], true);
@@ -1228,7 +1230,16 @@ namespace HaCreator.MapSimulator
 
             // BGM - only reload if different from current BGM
             string newBgmName = _mapBoard.MapInfo.bgm;
-            if (_currentBgmName != newBgmName)
+            if (SimGymRuntime.MuteAudio)
+            {
+                if (_audio != null)
+                {
+                    _audio.Dispose();
+                    _audio = null;
+                }
+                _currentBgmName = null;
+            }
+            else if (_currentBgmName != newBgmName)
             {
                 // Different BGM - dispose old and load new
                 if (_audio != null)
